@@ -106,6 +106,18 @@ All configuration via environment variables in `.env`:
 
 The `/docs/` directory contains detailed implementation tasks for backend, frontend, DevOps, and testing components.
 
+## Available Tools
+
+### Codebase Analysis
+- **Deepgraph**: Use for understanding large codebases, analyzing dependencies, and mapping code relationships. Particularly useful when exploring existing implementations or understanding how components interact.
+
+### Git Management  
+- **vibe-git**: Advanced git workflow management with auto-commit functionality
+  - `mcp__vibe-git__start_vibing`: Start auto-committing session (call first before code changes)
+  - `mcp__vibe-git__stop_vibing`: Complete session with squashed commit and PR creation
+  - `mcp__vibe-git__vibe_status`: Check current session status
+  - Use when implementing features to maintain clean git history
+
 ## Development Log
 
 **Important:** Always maintain a log of changes, implementation decisions, and results in `DEVELOPMENT_LOG.md` for future Claude instances to reference. This ensures continuity and helps track what has been built, tested, and what issues were encountered.
