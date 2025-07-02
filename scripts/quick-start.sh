@@ -139,7 +139,7 @@ fi
 echo "Checking other services..."
 
 # Check UI
-if curl -s -o /dev/null -w "%{http_code}" http://localhost:3000 | grep -q "200"; then
+if curl -s -o /dev/null -w "%{http_code}" http://localhost:3001 | grep -q "200"; then
     echo -e "${GREEN}✅ Voice UI is healthy${NC}"
 else
     echo -e "${YELLOW}⚠️  Voice UI might still be starting${NC}"
