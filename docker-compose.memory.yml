@@ -4,21 +4,20 @@ services:
     environment:
       - MEMORY_ENABLED=true
 
-# A-MEM service commented out - image not publicly available
-  # a-mem:
-  #   image: agiresearch/a-mem:latest
-  #   ports:
-  #     - "8001:8001"
-  #   environment:
-  #     - EMBEDDING_MODEL=ollama
-  #     - OLLAMA_URL=http://host.docker.internal:11434
-  #     - EMBEDDING_MODEL_NAME=nomic-embed-text
-  #     - REDIS_URL=redis://redis:6379
-  #     - VECTOR_DB_URL=http://chromadb:8002
-  #   depends_on:
-  #     - redis
-  #     - chromadb
-  #   restart: unless-stopped
+  a-mem:
+    image: agiresearch/a-mem:latest
+    ports:
+      - "8001:8001"
+    environment:
+      - EMBEDDING_MODEL=ollama
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - EMBEDDING_MODEL_NAME=nomic-embed-text
+      - REDIS_URL=redis://redis:6379
+      - VECTOR_DB_URL=http://chromadb:8002
+    depends_on:
+      - redis
+      - chromadb
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
