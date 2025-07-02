@@ -1,5 +1,3 @@
-version: '3.8'
-
 # CPU-only override for systems without GPU support
 services:
   whisper-live:
