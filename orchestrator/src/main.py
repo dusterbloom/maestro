@@ -209,33 +209,54 @@ async def health():
     })
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket, session_id: str = None):
     """WebSocket endpoint for real-time voice processing"""
     await websocket.accept()
-    session_id = websocket.headers.get("x-session-id", f"session_{int(time.time())}")
+    
+    # Get session ID from query params or generate one
+    if not session_id:
+        session_id = f"session_{int(time.time() * 1000)}"
     
     logger.info(f"WebSocket connection established for session: {session_id}")
     
     try:
         while True:
-            # Receive audio data from client
-            data = await websocket.receive_bytes()
+            # Receive message from client (could be text or bytes)
+            message = await websocket.receive()
             
-            if data == b"END_OF_AUDIO":
-                logger.info("End of audio signal received")
-                break
+            # Handle text messages (like END_OF_AUDIO signal)
+            if message["type"] == "websocket.receive" and "text" in message:
+                text_data = message["text"]
+                if text_data == "END_OF_AUDIO":
+                    logger.info("End of audio signal received")
+                    break
+                else:
+                    logger.warning(f"Unexpected text message: {text_data}")
+                    continue
             
-            # Process audio through pipeline
-            response_audio = await orchestrator.process_audio(data, session_id)
+            # Handle binary messages (audio data)
+            elif message["type"] == "websocket.receive" and "bytes" in message:
+                data = message["bytes"]
+                
+                if data == b"END_OF_AUDIO":
+                    logger.info("End of audio signal received")
+                    break
+                
+                # Process audio through pipeline
+                response_audio = await orchestrator.process_audio(data, session_id)
+                
+                # Send audio response back to client
+                if response_audio:
+                    await websocket.send_bytes(response_audio)
             
-            # Send audio response back to client
-            if response_audio:
-                await websocket.send_bytes(response_audio)
+            else:
+                logger.warning(f"Unexpected message type: {message.get('type')}")
             
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for session: {session_id}")
     except Exception as e:
         logger.error(f"WebSocket error for session {session_id}: {e}")
+        logger.exception("Full WebSocket error traceback:")
     finally:
         # Clean up WhisperLive connection
         await orchestrator.disconnect_from_whisper()
