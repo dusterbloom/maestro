@@ -1,0 +1,19 @@
+version: '3.8'
+
+# CPU-only override for systems without GPU support
+services:
+  whisper-live:
+    image: collabora/whisperlive:latest
+    environment:
+      - CUDA_VISIBLE_DEVICES=""
+    deploy:
+      resources:
+        reservations:
+          devices: []
+
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    deploy:
+      resources:
+        reservations:
+          devices: []
