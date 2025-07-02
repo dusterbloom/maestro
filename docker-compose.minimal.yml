@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Minimal version for testing without external service dependencies
 services:
   orchestrator:
