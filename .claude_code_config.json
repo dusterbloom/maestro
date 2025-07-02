@@ -1,0 +1,44 @@
+{
+  "mcpServers": {
+    "browsermcp": {
+      "command": "npx",
+      "args": [
+        "@browsermcp/mcp@latest"
+      ]
+    },
+    "vscode": {
+      "command": "npx",
+      "args": [
+        "vscode-as-mcp-server"
+      ]
+    },
+    "vibe-git-dev": {
+      "command": "wsl.exe",
+      "args": ["-d", "Ubuntu", "bash", "-c", "cd /mnt/c/Users/PC/Dev/vibe-git && /mnt/c/Users/PC/Dev/vibe-git/.venv/bin/python -m vibe_git.main"],
+      "cwd": "C:\\Users\\PC\\Dev\\vibe-git"
+    },
+    "MCP_DOCKER": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-l",
+        "mcp.client=claude-desktop",
+        "--rm",
+        "-i",
+        "alpine/socat",
+        "STDIO",
+        "TCP:host.docker.internal:8811"
+      ]
+    },
+      "Deep Graph MCP": {
+         "command": "npx",
+         "args": ["-y" , "mcp-code-graph@latest", 
+        "dusterbloom/maestro",
+        "collabora/WhisperLive",
+        "ollama/ollama",
+        "FastAPI/FastAPI",
+        "thewh1teagle/kokoro-onnx"
+        ]
+      }
+  }
+}

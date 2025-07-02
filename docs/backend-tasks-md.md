@@ -54,9 +54,19 @@ class VoiceOrchestrator:
         return audio_response
     
     async def transcribe(self, audio: bytes) -> str:
-        # TODO: Implement WhisperLive WebSocket connection
-        # For now, return mock response
-        return "Hello, how can I help you?"
+        # Convert audio bytes to numpy float32 array (WhisperLive format)
+        import numpy as np
+        audio_np = np.frombuffer(audio, dtype=np.float32)
+        
+        # Send to WhisperLive WebSocket (binary frame)
+        await self.whisper_ws.send(audio_np.tobytes())
+        
+        # Receive JSON response with transcription segments
+        response = await self.whisper_ws.recv()
+        data = json.loads(response)
+        
+        # Extract text from segments: {"uid": client_id, "segments": [...]}
+        return " ".join([seg.get("text", "") for seg in data.get("segments", [])])
     
     async def generate_response(self, text: str, context: str = "") -> str:
         prompt = f"{context}\n\nUser: {text}\nAssistant:" if context else text
@@ -67,20 +77,31 @@ class VoiceOrchestrator:
                 json={
                     "model": os.getenv("LLM_MODEL", "gemma2:2b"),
                     "prompt": prompt,
-                    "stream": False
+                    "stream": True  # Enable real-time streaming
                 }
             )
-            response.raise_for_status()
-            return response.json()["response"]
+            # Handle streaming NDJSON response
+            full_response = ""
+            async for line in response.aiter_lines():
+                if line:
+                    chunk = json.loads(line)
+                    if chunk.get("response"):
+                        full_response += chunk["response"]
+                        # Optionally yield partial responses for real-time streaming
+                    if chunk.get("done"):
+                        break
+            return full_response
     
     async def synthesize(self, text: str) -> bytes:
+        # NOTE: Kokoro is a Python library, not a web service
+        # The TTS service wrapper needs to be created (see BACKEND-003)
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{self.tts_url}/audio/speech",
+                f"{self.tts_url}/v1/audio/speech",  # Updated endpoint
                 json={
-                    "model": "kokoro",
+                    "input": text,
                     "voice": os.getenv("TTS_VOICE", "af_bella"),
-                    "input": text
+                    "response_format": "wav"
                 }
             )
             response.raise_for_status()
@@ -212,3 +233,24 @@ docker-compose stop a-mem
 2. Fallback behavior verified
 3. Connection pooling (if needed)
 4. Documentation updated
+
+---
+
+## BACKEND-003: Kokoro FastAPI Integration
+
+### Objective
+Integrate with the existing Kokoro-FastAPI Docker service (https://github.com/remsky/Kokoro-FastAPI) which provides a web service wrapper around the Kokoro TTS library.
+
+### Service Details
+- **Docker Image**: `ghcr.io/remsky/kokoro-fastapi-gpu:v0.2.1`
+- **Port**: 8880
+- **API Endpoints**: Compatible with OpenAI TTS API format
+
+### Implementation Notes
+The Kokoro-FastAPI service is already containerized and provides the exact API we need. No custom wrapper required.
+
+### Acceptance Criteria
+1. Kokoro-FastAPI service starts successfully
+2. TTS generation works with orchestrator
+3. Voice selection functions properly
+4. Audio quality meets latency requirements
