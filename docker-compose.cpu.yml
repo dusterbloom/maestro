@@ -1,7 +1,7 @@
 # CPU-only override for systems without GPU support
 services:
   whisper-live:
-    image: collabora/whisperlive:latest
+    image: ohorstmann/whisperlive:latest
     environment:
       - CUDA_VISIBLE_DEVICES=""
     deploy:
