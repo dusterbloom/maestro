@@ -90,8 +90,10 @@ echo
 read -p "Enable memory components (Redis, ChromaDB, A-MEM)? [y/N] " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    GPU_COMPOSE="$GPU_COMPOSE -f docker-compose.memory.yml"
+    GPU_COMPOSE="-f docker-compose.yml $GPU_COMPOSE -f docker-compose.memory.yml"
     echo -e "${GREEN}✅ Memory components enabled${NC}"
+else
+    GPU_COMPOSE="-f docker-compose.yml $GPU_COMPOSE"
 fi
 
 # Create data directories
