@@ -1,0 +1,43 @@
+version: '3.8'
+
+# Memory components add-on for conversation persistence
+services:
+  orchestrator:
+    environment:
+      - MEMORY_ENABLED=true
+
+  a-mem:
+    image: agiresearch/a-mem:latest
+    ports:
+      - "8001:8001"
+    environment:
+      - EMBEDDING_MODEL=ollama
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - EMBEDDING_MODEL_NAME=nomic-embed-text
+      - REDIS_URL=redis://redis:6379
+      - VECTOR_DB_URL=http://chromadb:8002
+    depends_on:
+      - redis
+      - chromadb
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8002:8000"
+    volumes:
+      - ./data/chromadb:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+      - ANONYMIZED_TELEMETRY=FALSE
+    restart: unless-stopped
