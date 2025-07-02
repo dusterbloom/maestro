@@ -106,17 +106,39 @@ All configuration via environment variables in `.env`:
 
 The `/docs/` directory contains detailed implementation tasks for backend, frontend, DevOps, and testing components.
 
-## Available Tools
+## Available MCP Tools
 
-### Codebase Analysis
-- **Deepgraph**: Use for understanding large codebases, analyzing dependencies, and mapping code relationships. Particularly useful when exploring existing implementations or understanding how components interact.
+### Codebase Analysis - Deep Graph MCP
+Use **Deepgraph** for understanding large codebases, analyzing dependencies, and mapping code relationships. Essential for exploring existing implementations and understanding component interactions.
 
-### Git Management  
-- **vibe-git**: Advanced git workflow management with auto-commit functionality
-  - `mcp__vibe-git__start_vibing`: Start auto-committing session (call first before code changes)
-  - `mcp__vibe-git__stop_vibing`: Complete session with squashed commit and PR creation
-  - `mcp__vibe-git__vibe_status`: Check current session status
-  - Use when implementing features to maintain clean git history
+**Available Repositories:**
+- `collabora/WhisperLive` - Speech-to-text WebSocket service
+- `ollama/ollama` - Language model API server  
+- `thewh1teagle/kokoro-onnx` - Text-to-speech library
+- `remsky/Kokoro-FastAPI` - Kokoro TTS web service wrapper
+
+**Key Commands:**
+- `mcp__Deep_Graph_MCP__folder-tree-structure`: Explore repository structure
+- `mcp__Deep_Graph_MCP__nodes-semantic-search`: Search for functionality by description
+- `mcp__Deep_Graph_MCP__get-code`: Get actual implementation code
+- `mcp__Deep_Graph_MCP__find-direct-connections`: Analyze dependencies
+- `mcp__Deep_Graph_MCP__docs-semantic-search`: Search documentation
+- `mcp__Deep_Graph_MCP__get-usage-dependency-links`: Impact analysis
+
+### Git Workflow - Vibe Git MCP
+Advanced git workflow management with auto-commit functionality for clean development history.
+
+**Key Commands:**
+- `mcp__vibe-git__start_vibing`: Start auto-committing session (call first before code changes)
+- `mcp__vibe-git__stop_vibing`: Complete session with squashed commit and PR creation
+- `mcp__vibe-git__vibe_status`: Check current session status
+- `mcp__vibe-git__stash_and_vibe`: Stash changes and start fresh session
+- `mcp__vibe-git__commit_and_vibe`: Commit work-in-progress and start new session
+- `mcp__vibe-git__vibe_from_here`: Continue vibing from current state
+
+### Additional MCP Tools
+- **Sequential Thinking MCP**: For complex problem-solving and multi-step analysis
+- **MCP Resource Tools**: List and read resources from configured servers
 
 ## Development Log
 
