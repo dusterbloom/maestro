@@ -20,7 +20,7 @@ services:
       context: ./ui
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "3001:3001"
     environment:
       - NEXT_PUBLIC_WS_URL=${WS_URL:-ws://localhost:8000/ws}
     depends_on:
