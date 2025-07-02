@@ -59,8 +59,8 @@ if [ "$MODELS_MISSING" = true ]; then
     read -p "Download models now? (y/N) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo -e "${YELLOW}📥 Pulling gemma2:2b model...${NC}"
-        ollama pull gemma2:2b
+        echo -e "${YELLOW}📥 Pulling gemma3n:latest model...${NC}"
+        ollama pull gemma3n:latest
         echo -e "${YELLOW}📥 Pulling nomic-embed-text model...${NC}"
         ollama pull nomic-embed-text
     fi
