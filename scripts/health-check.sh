@@ -65,7 +65,7 @@ check_service_json "Orchestrator" "http://localhost:8000/health" "status" "ok"
 ORCHESTRATOR_OK=$?
 
 # Check Voice UI
-check_service "Voice UI" "http://localhost:3000/" "200"
+check_service "Voice UI" "http://localhost:3001/" "200"
 UI_OK=$?
 
 echo
