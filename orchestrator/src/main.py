@@ -125,7 +125,7 @@ class VoiceOrchestrator:
                 response = await client.post(
                     f"{self.ollama_url}/api/generate",
                     json={
-                        "model": os.getenv("LLM_MODEL", "gemma2:2b"),
+                        "model": os.getenv("LLM_MODEL", "gemma3n:latest"),
                         "prompt": prompt,
                         "stream": True  # Enable real-time streaming
                     }

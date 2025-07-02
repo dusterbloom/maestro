@@ -21,7 +21,7 @@ services:
       - MEMORY_ENABLED=${MEMORY_ENABLED:-false}
       - AMEM_URL=${AMEM_URL:-http://a-mem:8001}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
-      - LLM_MODEL=${LLM_MODEL:-gemma2:2b}
+      - LLM_MODEL=${LLM_MODEL:-gemma3n:latest}
       - TTS_VOICE=${TTS_VOICE:-af_bella}
     depends_on:
       - whisper-live
@@ -335,7 +335,7 @@ REDIS_URL=redis://redis:6379
 
 # Model Configuration
 STT_MODEL=tiny
-LLM_MODEL=gemma2:2b
+LLM_MODEL=gemma3n:latest
 TTS_VOICE=af_bella
 EMBEDDING_MODEL_NAME=nomic-embed-text
 

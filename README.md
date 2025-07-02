@@ -8,7 +8,7 @@ Ultra-low-latency voice assistant achieving **<500ms end-to-end latency** by orc
 
 ```bash
 # 1. Ensure Ollama is running with required models
-ollama pull gemma2:2b
+ollama pull gemma3n:latest
 ollama pull nomic-embed-text
 
 # 2. One-command setup
@@ -91,7 +91,7 @@ MEMORY_ENABLED=false
 
 # Models
 STT_MODEL=tiny
-LLM_MODEL=gemma2:2b
+LLM_MODEL=gemma3n:latest
 TTS_VOICE=af_bella
 
 # Performance

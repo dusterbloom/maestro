@@ -50,7 +50,7 @@ curl http://localhost:8880/health    # Kokoro TTS
 ### Prerequisites
 - Ollama running on port 11434 with models:
   ```bash
-  ollama pull gemma2:2b
+  ollama pull gemma3n:latest
   ollama pull nomic-embed-text
   ```
 - Docker with GPU support (NVIDIA runtime)
@@ -90,7 +90,7 @@ Target latency budget:
 
 All configuration via environment variables in `.env`:
 - Core services: `WHISPER_URL`, `OLLAMA_URL`, `TTS_URL`
-- Models: `STT_MODEL=tiny`, `LLM_MODEL=gemma2:2b`, `TTS_VOICE=af_bella`
+- Models: `STT_MODEL=tiny`, `LLM_MODEL=gemma3n:latest`, `TTS_VOICE=af_bella`
 - Memory: `MEMORY_ENABLED=false`, `AMEM_URL`, `REDIS_URL`
 - Performance: `CHUNK_SIZE_MS=320`, `TARGET_LATENCY_MS=500`
 

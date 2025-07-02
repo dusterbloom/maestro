@@ -118,7 +118,7 @@ Browser WebM/Opus → Server → np.float32 → WhisperLive
 ```
 
 #### Service Dependencies
-- **External**: Ollama (port 11434) with `gemma2:2b` and `nomic-embed-text` models
+- **External**: Ollama (port 11434) with `gemma3n:latest` and `nomic-embed-text` models
 - **Internal**: WhisperLive (port 9090), Kokoro (port 8880), Orchestrator (port 8000), UI (port 3000)
 - **Optional**: A-MEM (port 8001), Redis (port 6379), ChromaDB (port 8002)
 

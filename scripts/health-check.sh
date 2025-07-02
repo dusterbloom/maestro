@@ -79,8 +79,8 @@ if curl -s http://localhost:11434/api/tags &> /dev/null; then
     OLLAMA_OK=0
     
     # Check for required models
-    echo -n "  - gemma2:2b model... "
-    if curl -s http://localhost:11434/api/tags | grep -q "gemma2:2b"; then
+    echo -n "  - gemma3n:latest model... "
+    if curl -s http://localhost:11434/api/tags | grep -q "gemma3n:latest"; then
         echo -e "${GREEN}✅ Available${NC}"
     else
         echo -e "${YELLOW}⚠️  Missing${NC}"
