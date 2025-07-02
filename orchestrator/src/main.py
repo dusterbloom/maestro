@@ -224,19 +224,37 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = None):
     
     try:
         while True:
-            # Receive audio data from client
-            data = await websocket.receive_bytes()
-            
-            if data == b"END_OF_AUDIO":
-                logger.info("End of audio signal received")
+            try:
+                # Wait for message (could be text or bytes)
+                message = await websocket.receive()
+                
+                if message["type"] == "websocket.disconnect":
+                    logger.info(f"Client disconnected for session: {session_id}")
+                    break
+                elif message["type"] == "websocket.receive":
+                    if "bytes" in message:
+                        data = message["bytes"]
+                        
+                        if data == b"END_OF_AUDIO":
+                            logger.info("End of audio signal received")
+                            break
+                        
+                        logger.info(f"Received {len(data)} bytes of audio data")
+                        
+                        # Process audio through pipeline
+                        response_audio = await orchestrator.process_audio(data, session_id)
+                        
+                        # Send audio response back to client
+                        if response_audio:
+                            await websocket.send_bytes(response_audio)
+                    elif "text" in message:
+                        text_data = message["text"]
+                        logger.info(f"Received text message: {text_data}")
+                        if text_data == "ping":
+                            await websocket.send_text("pong")
+            except Exception as inner_e:
+                logger.error(f"Error receiving message: {inner_e}")
                 break
-            
-            # Process audio through pipeline
-            response_audio = await orchestrator.process_audio(data, session_id)
-            
-            # Send audio response back to client
-            if response_audio:
-                await websocket.send_bytes(response_audio)
             
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for session: {session_id}")
