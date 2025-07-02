@@ -27,6 +27,9 @@ export class VoiceWebSocket {
       this.ws.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) {
           this.onAudioCallback?.(event.data);
+        } else if (typeof event.data === 'string') {
+          console.log('WebSocket message:', event.data);
+          // Handle connection confirmation or other text messages
         }
       };
       
