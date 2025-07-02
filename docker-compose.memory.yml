@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Memory components add-on for conversation persistence
 services:
   orchestrator:
