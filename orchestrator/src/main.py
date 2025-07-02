@@ -224,8 +224,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = None):
             # Receive message from client (could be text or bytes)
             message = await websocket.receive()
             
+            # Handle disconnect message
+            if message["type"] == "websocket.disconnect":
+                logger.info(f"Client disconnected for session: {session_id}")
+                break
+            
             # Handle text messages (like END_OF_AUDIO signal)
-            if message["type"] == "websocket.receive" and "text" in message:
+            elif message["type"] == "websocket.receive" and "text" in message:
                 text_data = message["text"]
                 if text_data == "END_OF_AUDIO":
                     logger.info("End of audio signal received")
