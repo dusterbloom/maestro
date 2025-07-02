@@ -186,7 +186,7 @@ export default function VoiceButton({ onStatusChange, onError }: VoiceButtonProp
     }
   };
   
-  const isDisabled = status !== 'connected' || status === 'processing';
+  const isDisabled = status !== 'connected' && status !== 'recording';
   
   return (
     <button
