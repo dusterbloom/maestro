@@ -20,7 +20,7 @@ services:
     restart: unless-stopped
 
   whisper-live:
-    image: collabora/whisperlive:latest-gpu
+    image: ohorstmann/whisperlive:latest
     ports:
       - "9090:9090"
     volumes:
