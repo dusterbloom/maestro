@@ -44,8 +44,8 @@ fi
 echo "Checking required models..."
 MODELS_MISSING=false
 
-if ! curl -s http://localhost:11434/api/tags | grep -q "gemma2:2b"; then
-    echo -e "${YELLOW}📥 Model gemma2:2b not found${NC}"
+if ! curl -s http://localhost:11434/api/tags | grep -q "gemma3n:latest"; then
+    echo -e "${YELLOW}📥 Model gemma3n:latest not found${NC}"
     MODELS_MISSING=true
 fi
 
