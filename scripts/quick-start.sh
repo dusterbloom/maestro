@@ -150,7 +150,7 @@ echo
 echo -e "${GREEN}✅ Voice Orchestrator is ready!${NC}"
 echo
 echo -e "${BLUE}📱 Open your web browser and go to:${NC}"
-echo -e "   ${GREEN}http://localhost:3000${NC}"
+echo -e "   ${GREEN}http://localhost:3001${NC}"
 echo
 echo -e "${BLUE}🔧 Management commands:${NC}"
 echo "   📊 View logs: docker-compose logs -f"
