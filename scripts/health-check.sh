@@ -158,7 +158,7 @@ fi
 
 if [ $TOTAL_ISSUES -eq 0 ]; then
     echo -e "${GREEN}✅ All critical services are healthy!${NC}"
-    echo -e "${BLUE}🌐 Access the Voice UI at: http://localhost:3000${NC}"
+    echo -e "${BLUE}🌐 Access the Voice UI at: http://localhost:3001${NC}"
     exit 0
 else
     echo -e "${RED}❌ Found $TOTAL_ISSUES critical issues${NC}"
