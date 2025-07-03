@@ -1,0 +1,131 @@
+WhisperLive message: {"uid": "session_1751564623019", "message": "SERVER_READY", "backend": "faster_whisper"}
+page-16ef5f2422d4d10a.js:1 WhisperLive SERVER_READY received
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "1.109", "text": " Hello", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "1.109", "text": " Hello", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "1.280", "text": " Hello there.", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there.
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there.
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there.
+page-16ef5f2422d4d10a.js:1 Complete sentence received: Hello there.
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "1.365", "text": " Hello there.", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there.
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there.
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there.
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there.
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "1.450", "text": " Hello there", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "1.536", "text": " Hello there!", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there!
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there!
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there!
+page-16ef5f2422d4d10a.js:1 Complete sentence received: Hello there!
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "1.621", "text": " Hello there!", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there!
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there!
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there!
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there!
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "1.706", "text": " Hello there!", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there!
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there!
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there!
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there!
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "1.877", "text": " Hello there, can you?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you?
+page-16ef5f2422d4d10a.js:1 Complete sentence received: Hello there, can you?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "1.877", "text": " Hello there, can you?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "2.047", "text": " Hello there, can you tell?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell?
+page-16ef5f2422d4d10a.js:1 Complete sentence received: Hello there, can you tell?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "2.133", "text": " Hello there, can you tell?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you tell?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "2.303", "text": " Hello there, can you tell me", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "2.400", "text": " Hello there, can you tell me?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me?
+page-16ef5f2422d4d10a.js:1 Complete sentence received: Hello there, can you tell me?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "2.400", "text": " Hello there, can you tell me a story?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence received: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "2.986", "text": " Hello there, can you tell me a story?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "3.327", "text": " Hello there, can you tell me a story?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "3.400", "text": " Hello there, can you tell me a story?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 LLM Response: Hello! Can you tell me what you'd like me to tell you? I'm ready to answer your questions or help with whatever you need. 😊 
+
+Just let me know what you're looking for!
+:3001/favicon.ico:1 
+            
+            
+           GET http://localhost:3001/favicon.ico 404 (Not Found)Understand this error
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "3.400", "text": " Hello there, can you tell me a story?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "3.400", "text": " Hello there, can you tell me a story?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "3.400", "text": " Hello there, can you tell me a story?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "3.400", "text": " Hello there, can you tell me a story?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "3.400", "text": " Hello there, can you tell me a story?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "3.400", "text": " Hello there, can you tell me a story?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.400", "end": "3.400", "text": " Hello there, can you tell me a story?", "completed": false}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 WhisperLive message: {"uid": "session_1751564623019", "segments": [{"start": "0.000", "end": "3.400", "text": " Hello there, can you tell me a story?", "completed": true}]}
+page-16ef5f2422d4d10a.js:1 Transcript received:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Received transcript:  Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Complete sentence detected: Hello there, can you tell me a story?
+page-16ef5f2422d4d10a.js:1 Duplicate sentence detected, skipping: Hello there, can you tell me a story?
