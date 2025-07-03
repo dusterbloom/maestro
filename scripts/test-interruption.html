@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TTS Interruption Test Suite</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+        }
+        .test-section h3 {
+            margin-top: 0;
+            color: #2196F3;
+        }
+        button {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #1976D2;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.info { background: #d1ecf1; color: #0c5460; }
+        .status.warning { background: #fff3cd; color: #856404; }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .metric {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+        }
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2196F3;
+        }
+        .metric-label {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .log {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin: 15px 0;
+        }
+        .audio-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #4CAF50;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ TTS Interruption Test Suite</h1>
+        
+        <div class="test-section">
+            <h3>🔊 Audio Level Monitor</h3>
+            <div class="status info" id="audioStatus">Initializing audio...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="audioLevelBar"></div>
+            </div>
+            <div class="audio-controls">
+                <button onclick="initAudio()">Initialize Audio</button>
+                <button onclick="testMicrophone()">Test Microphone</button>
+                <label>
+                    VAD Threshold: 
+                    <input type="range" id="vadThreshold" min="0.01" max="0.1" step="0.01" value="0.02" onchange="updateVADThreshold()">
+                    <span id="vadThresholdValue">0.02</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🎯 Barge-in Tests</h3>
+            <div class="status info" id="bargeInStatus">Ready to test barge-in functionality</div>
+            <div class="audio-controls">
+                <button onclick="testTTSPlayback()">Start TTS Test</button>
+                <button onclick="simulateBargeIn()">Simulate Barge-in</button>
+                <button onclick="stopAllAudio()">Stop All Audio</button>
+            </div>
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-value" id="bargeInLatency">-</div>
+                    <div class="metric-label">Barge-in Latency (ms)</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="interruptionCount">0</div>
+                    <div class="metric-label">Successful Interruptions</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="falsePositives">0</div>
+                    <div class="metric-label">False Positives</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>📊 Performance Metrics</h3>
+            <div class="status info" id="performanceStatus">No tests run yet</div>
+            <div class="audio-controls">
+                <button onclick="runLatencyTest()">Run Latency Test</button>
+                <button onclick="runStressTest()">Run Stress Test</button>
+                <button onclick="clearResults()">Clear Results</button>
+                <button onclick="exportResults()">Export Results</button>
+            </div>
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-value" id="avgLatency">-</div>
+                    <div class="metric-label">Average Latency (ms)</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="testCount">0</div>
+                    <div class="metric-label">Tests Completed</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>📝 Test Log</h3>
+            <div class="log" id="testLog"></div>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+    </div>
+
+    <script>
+        // Test state
+        let audioRecorder = null;
+        let audioPlayer = null;
+        let testResults = [];
+        let interruptionTests = 0;
+        let successfulInterruptions = 0;
+        let falsePositives = 0;
+        let isMonitoring = false;
+        let currentAudioLevel = 0;
+        let vadThreshold = 0.02;
+        let isPlaying = false;
+
+        // Audio classes (simplified versions for testing)
+        class SimpleAudioRecorder {
+            constructor() {
+                this.audioContext = null;
+                this.stream = null;
+                this.processor = null;
+                this.mediaStreamSource = null;
+                this.isRecording = false;
+                this.onAudioLevelCallback = null;
+                this.currentAudioLevel = 0;
+                this.vadThreshold = 0.02;
+            }
+
+            async initialize() {
+                try {
+                    this.stream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            channelCount: 1,
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        } 
+                    });
+                    
+                    this.audioContext = new AudioContext();
+                    this.mediaStreamSource = this.audioContext.createMediaStreamSource(this.stream);
+                    this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+                    
+                    this.processor.onaudioprocess = (event) => {
+                        const inputData = event.inputBuffer.getChannelData(0);
+                        
+                        // Calculate RMS level
+                        let sum = 0;
+                        for (let i = 0; i < inputData.length; i++) {
+                            sum += inputData[i] * inputData[i];
+                        }
+                        this.currentAudioLevel = Math.sqrt(sum / inputData.length);
+                        
+                        if (this.onAudioLevelCallback) {
+                            this.onAudioLevelCallback(this.currentAudioLevel);
+                        }
+                    };
+                    
+                    this.mediaStreamSource.connect(this.processor);
+                    this.processor.connect(this.audioContext.destination);
+                    
+                    return true;
+                } catch (error) {
+                    console.error('Failed to initialize audio recorder:', error);
+                    return false;
+                }
+            }
+
+            isVoiceActive() {
+                return this.currentAudioLevel > this.vadThreshold;
+            }
+
+            setVadThreshold(threshold) {
+                this.vadThreshold = threshold;
+            }
+
+            onAudioLevel(callback) {
+                this.onAudioLevelCallback = callback;
+            }
+
+            cleanup() {
+                if (this.processor) {
+                    this.processor.disconnect();
+                    this.processor = null;
+                }
+                if (this.mediaStreamSource) {
+                    this.mediaStreamSource.disconnect();
+                    this.mediaStreamSource = null;
+                }
+                if (this.stream) {
+                    this.stream.getTracks().forEach(track => track.stop());
+                    this.stream = null;
+                }
+                if (this.audioContext) {
+                    this.audioContext.close();
+                    this.audioContext = null;
+                }
+            }
+        }
+
+        class SimpleAudioPlayer {
+            constructor() {
+                this.audioContext = new AudioContext();
+                this.gainNode = this.audioContext.createGain();
+                this.gainNode.connect(this.audioContext.destination);
+                this.activeSources = [];
+                this.onPlaybackStartCallback = null;
+                this.onPlaybackEndCallback = null;
+            }
+
+            async playTone(frequency = 440, duration = 2000) {
+                const oscillator = this.audioContext.createOscillator();
+                oscillator.frequency.setValueAtTime(frequency, this.audioContext.currentTime);
+                oscillator.connect(this.gainNode);
+                
+                this.activeSources.push(oscillator);
+                
+                if (this.onPlaybackStartCallback) {
+                    this.onPlaybackStartCallback();
+                }
+                
+                oscillator.start();
+                oscillator.stop(this.audioContext.currentTime + duration / 1000);
+                
+                oscillator.onended = () => {
+                    const index = this.activeSources.indexOf(oscillator);
+                    if (index > -1) {
+                        this.activeSources.splice(index, 1);
+                    }
+                    
+                    if (this.activeSources.length === 0 && this.onPlaybackEndCallback) {
+                        this.onPlaybackEndCallback();
+                    }
+                };
+            }
+
+            stopAll() {
+                this.activeSources.forEach(source => {
+                    try {
+                        source.stop();
+                    } catch (e) {
+                        // Source might already be stopped
+                    }
+                });
+                this.activeSources = [];
+                
+                if (this.onPlaybackEndCallback) {
+                    this.onPlaybackEndCallback();
+                }
+            }
+
+            isPlaying() {
+                return this.activeSources.length > 0;
+            }
+
+            onPlaybackStart(callback) {
+                this.onPlaybackStartCallback = callback;
+            }
+
+            onPlaybackEnd(callback) {
+                this.onPlaybackEndCallback = callback;
+            }
+        }
+
+        // Utility functions
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logElement = document.getElementById('testLog');
+            const entry = `[${timestamp}] ${type.toUpperCase()}: ${message}\n`;
+            logElement.textContent += entry;
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(entry);
+        }
+
+        function updateStatus(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `status ${type}`;
+        }
+
+        function updateMetric(elementId, value) {
+            document.getElementById(elementId).textContent = value;
+        }
+
+        // Test functions
+        async function initAudio() {
+            log('Initializing audio system...');
+            
+            try {
+                audioRecorder = new SimpleAudioRecorder();
+                const initialized = await audioRecorder.initialize();
+                
+                if (!initialized) {
+                    throw new Error('Failed to initialize audio recorder');
+                }
+                
+                audioPlayer = new SimpleAudioPlayer();
+                
+                // Set up audio level monitoring
+                audioRecorder.onAudioLevel((level) => {
+                    currentAudioLevel = level;
+                    const percentage = Math.min(level / 0.1 * 100, 100);
+                    document.getElementById('audioLevelBar').style.width = percentage + '%';
+                    
+                    // Check for voice activity during playback (barge-in detection)
+                    if (audioRecorder.isVoiceActive() && isPlaying) {
+                        handleBargeIn();
+                    }
+                });
+                
+                // Set up playback monitoring
+                audioPlayer.onPlaybackStart(() => {
+                    isPlaying = true;
+                    log('Audio playback started');
+                });
+                
+                audioPlayer.onPlaybackEnd(() => {
+                    isPlaying = false;
+                    log('Audio playback ended');
+                });
+                
+                updateStatus('audioStatus', 'Audio system initialized successfully', 'success');
+                log('Audio system initialized successfully');
+                
+            } catch (error) {
+                updateStatus('audioStatus', `Failed to initialize: ${error.message}`, 'error');
+                log(`Failed to initialize audio: ${error.message}`, 'error');
+            }
+        }
+
+        function testMicrophone() {
+            if (!audioRecorder) {
+                updateStatus('audioStatus', 'Audio not initialized', 'error');
+                return;
+            }
+            
+            log('Testing microphone for 5 seconds...');
+            updateStatus('audioStatus', 'Testing microphone - speak now!', 'warning');
+            
+            let maxLevel = 0;
+            const startTime = Date.now();
+            
+            const testInterval = setInterval(() => {
+                if (currentAudioLevel > maxLevel) {
+                    maxLevel = currentAudioLevel;
+                }
+                
+                if (Date.now() - startTime > 5000) {
+                    clearInterval(testInterval);
+                    log(`Microphone test complete. Max level: ${maxLevel.toFixed(4)}`);
+                    updateStatus('audioStatus', `Microphone OK (max: ${maxLevel.toFixed(4)})`, 'success');
+                }
+            }, 100);
+        }
+
+        function updateVADThreshold() {
+            const slider = document.getElementById('vadThreshold');
+            vadThreshold = parseFloat(slider.value);
+            document.getElementById('vadThresholdValue').textContent = vadThreshold;
+            
+            if (audioRecorder) {
+                audioRecorder.setVadThreshold(vadThreshold);
+                log(`VAD threshold updated to ${vadThreshold}`);
+            }
+        }
+
+        async function testTTSPlayback() {
+            if (!audioPlayer) {
+                updateStatus('bargeInStatus', 'Audio not initialized', 'error');
+                return;
+            }
+            
+            log('Starting TTS simulation (tone playback)...');
+            updateStatus('bargeInStatus', 'Playing TTS simulation - try speaking to interrupt', 'warning');
+            
+            // Play a tone for 5 seconds to simulate TTS
+            await audioPlayer.playTone(440, 5000);
+        }
+
+        function simulateBargeIn() {
+            if (!isPlaying) {
+                updateStatus('bargeInStatus', 'No audio playing to interrupt', 'warning');
+                return;
+            }
+            
+            log('Simulating barge-in...');
+            handleBargeIn();
+        }
+
+        function handleBargeIn() {
+            const startTime = performance.now();
+            
+            log('Barge-in detected! Stopping audio...');
+            
+            if (audioPlayer) {
+                audioPlayer.stopAll();
+            }
+            
+            const latency = performance.now() - startTime;
+            
+            successfulInterruptions++;
+            updateMetric('interruptionCount', successfulInterruptions);
+            updateMetric('bargeInLatency', Math.round(latency));
+            
+            updateStatus('bargeInStatus', `Barge-in successful (${Math.round(latency)}ms)`, 'success');
+            log(`Barge-in completed in ${Math.round(latency)}ms`);
+            
+            // Record test result
+            testResults.push({
+                type: 'barge_in',
+                timestamp: Date.now(),
+                latency: latency,
+                success: true
+            });
+        }
+
+        function stopAllAudio() {
+            if (audioPlayer) {
+                audioPlayer.stopAll();
+                log('All audio stopped manually');
+            }
+        }
+
+        async function runLatencyTest() {
+            log('Starting latency test suite...');
+            updateStatus('performanceStatus', 'Running latency tests...', 'warning');
+            
+            const latencies = [];
+            
+            for (let i = 0; i < 5; i++) {
+                log(`Latency test ${i + 1}/5`);
+                
+                const startTime = performance.now();
+                await audioPlayer.playTone(200 + i * 100, 1000);
+                
+                // Simulate processing delay
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                const latency = performance.now() - startTime;
+                latencies.push(latency);
+                
+                await new Promise(resolve => setTimeout(resolve, 500)); // Pause between tests
+            }
+            
+            const avgLatency = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+            updateMetric('avgLatency', Math.round(avgLatency));
+            updateMetric('testCount', latencies.length);
+            
+            log(`Latency test complete. Average: ${Math.round(avgLatency)}ms`);
+            updateStatus('performanceStatus', `Latency tests complete (avg: ${Math.round(avgLatency)}ms)`, 'success');
+        }
+
+        async function runStressTest() {
+            log('Starting stress test...');
+            updateStatus('performanceStatus', 'Running stress test...', 'warning');
+            
+            // Rapid start/stop cycles
+            for (let i = 0; i < 10; i++) {
+                log(`Stress test cycle ${i + 1}/10`);
+                
+                // Start audio
+                const playPromise = audioPlayer.playTone(440, 500);
+                
+                // Stop after random delay
+                const delay = Math.random() * 300 + 100;
+                setTimeout(() => {
+                    audioPlayer.stopAll();
+                }, delay);
+                
+                await playPromise;
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+            
+            log('Stress test complete');
+            updateStatus('performanceStatus', 'Stress test complete', 'success');
+        }
+
+        function clearResults() {
+            testResults = [];
+            successfulInterruptions = 0;
+            falsePositives = 0;
+            updateMetric('interruptionCount', 0);
+            updateMetric('falsePositives', 0);
+            updateMetric('bargeInLatency', '-');
+            updateMetric('avgLatency', '-');
+            updateMetric('testCount', 0);
+            log('Test results cleared');
+        }
+
+        function clearLog() {
+            document.getElementById('testLog').textContent = '';
+        }
+
+        function exportResults() {
+            const results = {
+                timestamp: new Date().toISOString(),
+                summary: {
+                    totalTests: testResults.length,
+                    successfulInterruptions: successfulInterruptions,
+                    falsePositives: falsePositives,
+                    vadThreshold: vadThreshold
+                },
+                testResults: testResults
+            };
+            
+            const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `interruption_test_results_${Date.now()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            
+            log('Test results exported');
+        }
+
+        // Initialize on page load
+        window.addEventListener('load', () => {
+            log('TTS Interruption Test Suite loaded');
+            updateStatus('audioStatus', 'Click "Initialize Audio" to begin testing', 'info');
+        });
+    </script>
+</body>
+</html>

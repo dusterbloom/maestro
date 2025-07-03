@@ -1,0 +1,169 @@
+[
+  {
+    "test_type": "component_latency",
+    "num_tests": 3,
+    "timestamp": "2025-07-03T22:53:36.680169",
+    "raw_data": {
+      "stt_latency": [
+        null,
+        null,
+        null
+      ],
+      "llm_latency": [
+        4077.122211456299,
+        1.50299072265625,
+        1.7557144165039062
+      ],
+      "tts_latency": [
+        112.70904541015625,
+        83.85586738586426,
+        84.11622047424316
+      ],
+      "orchestrator_latency": [
+        null,
+        null,
+        null
+      ]
+    },
+    "statistics": {
+      "stt_latency": {
+        "error": "No successful measurements"
+      },
+      "llm_latency": {
+        "mean": 1360.1269721984863,
+        "median": 1.7557144165039062,
+        "min": 1.50299072265625,
+        "max": 4077.122211456299,
+        "std": 2352.986902551633,
+        "p95": 3669.585561752319,
+        "p99": 3995.614881515503,
+        "success_rate": 100.0
+      },
+      "tts_latency": {
+        "mean": 93.56037775675456,
+        "median": 84.11622047424316,
+        "min": 83.85586738586426,
+        "max": 112.70904541015625,
+        "std": 16.583743564345816,
+        "p95": 109.84976291656494,
+        "p99": 112.13718891143799,
+        "success_rate": 100.0
+      },
+      "orchestrator_latency": {
+        "error": "No successful measurements"
+      }
+    }
+  },
+  {
+    "test_type": "end_to_end_latency",
+    "num_tests": 2,
+    "timestamp": "2025-07-03T22:53:46.692723",
+    "raw_data": {
+      "total_latency": [
+        1371.788740158081,
+        4635.467767715454
+      ],
+      "stt_component": [
+        0,
+        0
+      ],
+      "llm_component": [
+        1119.5330619812012,
+        3894.815683364868
+      ],
+      "tts_component": [
+        1252.1336078643799,
+        4038.283109664917
+      ],
+      "network_overhead": [
+        1119.5330619812012,
+        3894.815683364868
+      ]
+    },
+    "statistics": {
+      "total_latency": {
+        "mean": 3003.6282539367676,
+        "median": 3003.6282539367676,
+        "min": 1371.788740158081,
+        "max": 4635.467767715454,
+        "std": 2307.7695720021356,
+        "p95": 4472.283816337585,
+        "success_rate": 100.0
+      },
+      "stt_component": {
+        "mean": 0,
+        "median": 0.0,
+        "min": 0,
+        "max": 0,
+        "std": 0.0,
+        "p95": 0.0,
+        "success_rate": 100.0
+      },
+      "llm_component": {
+        "mean": 2507.1743726730347,
+        "median": 2507.1743726730347,
+        "min": 1119.5330619812012,
+        "max": 3894.815683364868,
+        "std": 1962.4211612895685,
+        "p95": 3756.051552295685,
+        "success_rate": 100.0
+      },
+      "tts_component": {
+        "mean": 2645.2083587646484,
+        "median": 2645.2083587646484,
+        "min": 1252.1336078643799,
+        "max": 4038.283109664917,
+        "std": 1970.1052061226808,
+        "p95": 3898.97563457489,
+        "success_rate": 100.0
+      },
+      "network_overhead": {
+        "mean": 2507.1743726730347,
+        "median": 2507.1743726730347,
+        "min": 1119.5330619812012,
+        "max": 3894.815683364868,
+        "std": 1962.4211612895685,
+        "p95": 3756.051552295685,
+        "success_rate": 100.0
+      }
+    }
+  },
+  {
+    "test_type": "concurrent_users",
+    "user_counts": [
+      1,
+      2,
+      4
+    ],
+    "timestamp": "2025-07-03T22:55:18.109552",
+    "results": {
+      "1_users": {
+        "successful_sessions": 1,
+        "failed_sessions": 0,
+        "total_duration": 31.255067348480225,
+        "avg_latency": 2606.4820289611816,
+        "median_latency": 2606.4820289611816,
+        "p95_latency": 3036.7759466171265,
+        "throughput_rps": 0.06398962375287442
+      },
+      "2_users": {
+        "successful_sessions": 2,
+        "failed_sessions": 0,
+        "total_duration": 30.063639640808105,
+        "avg_latency": 0,
+        "median_latency": 0,
+        "p95_latency": 0,
+        "throughput_rps": 0.0
+      },
+      "4_users": {
+        "successful_sessions": 4,
+        "failed_sessions": 0,
+        "total_duration": 30.097835540771484,
+        "avg_latency": 0,
+        "median_latency": 0,
+        "p95_latency": 0,
+        "throughput_rps": 0.0
+      }
+    }
+  }
+]

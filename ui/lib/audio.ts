@@ -5,6 +5,14 @@ export class AudioRecorder {
   private mediaStreamSource: MediaStreamAudioSourceNode | null = null;
   private isRecording = false;
   private onAudioDataCallback?: (audioData: Float32Array) => void;
+  private onAudioLevelCallback?: (level: number) => void;
+  
+  // Voice activity detection for barge-in
+  private currentAudioLevel = 0;
+  private voiceActivityThreshold = 0.02; // Threshold for detecting speech
+  private silenceDuration = 0;
+  private maxSilenceMs = 1000; // 1 second of silence before stopping
+  private lastVoiceActivityTime = 0;
   
   async initialize(): Promise<boolean> {
     try {
@@ -29,9 +37,28 @@ export class AudioRecorder {
       
       // Handle audio processing like WhisperLive Chrome Extension
       this.processor.onaudioprocess = (event) => {
-        if (!this.isRecording || !this.onAudioDataCallback) return;
-        
         const inputData = event.inputBuffer.getChannelData(0);
+        
+        // Calculate current audio level (RMS)
+        let sum = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          sum += inputData[i] * inputData[i];
+        }
+        this.currentAudioLevel = Math.sqrt(sum / inputData.length);
+        
+        // Update voice activity detection
+        const now = Date.now();
+        if (this.currentAudioLevel > this.voiceActivityThreshold) {
+          this.lastVoiceActivityTime = now;
+          this.silenceDuration = 0;
+        } else {
+          this.silenceDuration = now - this.lastVoiceActivityTime;
+        }
+        
+        // Notify about audio level for barge-in detection
+        this.onAudioLevelCallback?.(this.currentAudioLevel);
+        
+        if (!this.isRecording || !this.onAudioDataCallback) return;
         
         // Resample to 16kHz like Chrome Extension
         const resampledData = this.resampleTo16kHz(inputData, this.audioContext!.sampleRate);
@@ -97,9 +124,23 @@ export class AudioRecorder {
   }
   
   getAudioLevel(): number {
-    // Simplified audio level detection
-    // In a real implementation, you'd analyze the audio stream
-    return Math.random() * 0.5 + 0.1;
+    return this.currentAudioLevel;
+  }
+  
+  isVoiceActive(): boolean {
+    return this.currentAudioLevel > this.voiceActivityThreshold;
+  }
+  
+  getSilenceDuration(): number {
+    return this.silenceDuration;
+  }
+  
+  setVoiceActivityThreshold(threshold: number) {
+    this.voiceActivityThreshold = threshold;
+  }
+  
+  onAudioLevel(callback: (level: number) => void) {
+    this.onAudioLevelCallback = callback;
   }
   
   cleanup() {
@@ -132,6 +173,9 @@ export class AudioPlayer {
   private gainNode: GainNode;
   private isStreaming: boolean = false;
   private streamingSource: AudioBufferSourceNode | null = null;
+  private activeSources: AudioBufferSourceNode[] = [];
+  private onPlaybackStartCallback?: () => void;
+  private onPlaybackEndCallback?: () => void;
   
   constructor() {
     this.audioContext = new AudioContext();
@@ -150,11 +194,31 @@ export class AudioPlayer {
       const source = this.audioContext.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(this.gainNode);
+      
+      // Track active sources for interruption capability
+      this.activeSources.push(source);
+      
+      // Notify playback start
+      this.onPlaybackStartCallback?.();
+      
       source.start();
       
       // Return promise that resolves when audio finishes playing
       return new Promise((resolve) => {
-        source.onended = () => resolve();
+        source.onended = () => {
+          // Remove from active sources
+          const index = this.activeSources.indexOf(source);
+          if (index > -1) {
+            this.activeSources.splice(index, 1);
+          }
+          
+          // Notify playback end if no more active sources
+          if (this.activeSources.length === 0) {
+            this.onPlaybackEndCallback?.();
+          }
+          
+          resolve();
+        };
       });
     } catch (error) {
       console.error('Failed to play audio:', error);
@@ -187,11 +251,33 @@ export class AudioPlayer {
       const source = this.audioContext.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(this.gainNode);
+      
+      // Track active sources for interruption capability
+      this.activeSources.push(source);
+      
+      // Start playback notification on first chunk
+      if (this.activeSources.length === 1) {
+        this.onPlaybackStartCallback?.();
+      }
+      
       source.start();
       
       // Return promise that resolves when audio finishes playing
       return new Promise((resolve) => {
-        source.onended = () => resolve();
+        source.onended = () => {
+          // Remove from active sources
+          const index = this.activeSources.indexOf(source);
+          if (index > -1) {
+            this.activeSources.splice(index, 1);
+          }
+          
+          // Notify playback end if no more active sources
+          if (this.activeSources.length === 0) {
+            this.onPlaybackEndCallback?.();
+          }
+          
+          resolve();
+        };
       });
     } catch (error) {
       console.error('Failed to play PCM chunk:', error);
@@ -204,7 +290,46 @@ export class AudioPlayer {
     this.gainNode.gain.value = Math.max(0, Math.min(1, volume));
   }
   
+  /**
+   * Stop all currently playing audio immediately (for barge-in)
+   */
+  stopAll() {
+    console.log(`Stopping ${this.activeSources.length} active audio sources`);
+    this.activeSources.forEach(source => {
+      try {
+        source.stop();
+      } catch (e) {
+        // Source might already be stopped
+        console.warn('Failed to stop audio source:', e);
+      }
+    });
+    this.activeSources = [];
+    this.onPlaybackEndCallback?.();
+  }
+  
+  /**
+   * Check if audio is currently playing
+   */
+  isPlaying(): boolean {
+    return this.activeSources.length > 0;
+  }
+  
+  /**
+   * Set callback for when playback starts
+   */
+  onPlaybackStart(callback: () => void) {
+    this.onPlaybackStartCallback = callback;
+  }
+  
+  /**
+   * Set callback for when all playback ends
+   */
+  onPlaybackEnd(callback: () => void) {
+    this.onPlaybackEndCallback = callback;
+  }
+  
   cleanup() {
+    this.stopAll();
     this.audioContext.close();
   }
 }
