@@ -15,7 +15,7 @@ WhisperLive (STT) → Orchestrator → Ollama (LLM) → Kokoro (TTS)
 
 ```bash
 # 1. Ensure Ollama is running
-ollama pull gemma2:2b
+ollama pull gemma3n:latest
 ollama pull nomic-embed-text
 
 # 2. Clone and configure
@@ -66,7 +66,7 @@ REDIS_URL=redis://redis:6379
 
 # Models
 STT_MODEL=tiny
-LLM_MODEL=gemma2:2b
+LLM_MODEL=gemma3n:latest
 TTS_VOICE=af_bella
 ```
 

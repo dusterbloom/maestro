@@ -110,7 +110,7 @@ services:
       - MEMORY_ENABLED=${MEMORY_ENABLED:-false}
       - AMEM_URL=${AMEM_URL:-http://a-mem:8001}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
-      - LLM_MODEL=${LLM_MODEL:-gemma2:2b}
+      - LLM_MODEL=${LLM_MODEL:-gemma3n:latest}
       - TTS_VOICE=${TTS_VOICE:-af_bella}
     depends_on:
       - whisper-live
@@ -156,7 +156,7 @@ services:
       context: ./ui
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - NEXT_PUBLIC_WS_URL=${WS_URL:-ws://localhost:8000/ws}
     depends_on:
@@ -249,7 +249,7 @@ REDIS_URL=redis://redis:6379
 
 # Model Configuration
 STT_MODEL=tiny
-LLM_MODEL=gemma2:2b
+LLM_MODEL=gemma3n:latest
 TTS_VOICE=af_bella
 EMBEDDING_MODEL_NAME=nomic-embed-text
 
@@ -389,9 +389,9 @@ fi
 
 # Check for required models
 echo "Checking required models..."
-if ! curl -s http://localhost:11434/api/tags | grep -q "gemma2:2b"; then
-    echo -e "${YELLOW}📥 Pulling gemma2:2b model...${NC}"
-    ollama pull gemma2:2b
+if ! curl -s http://localhost:11434/api/tags | grep -q "gemma3n:latest"; then
+    echo -e "${YELLOW}📥 Pulling gemma3n:latest model...${NC}"
+    ollama pull gemma3n:latest
 fi
 
 if ! curl -s http://localhost:11434/api/tags | grep -q "nomic-embed-text"; then

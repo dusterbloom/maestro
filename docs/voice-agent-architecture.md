@@ -125,7 +125,7 @@ message AudioResponse {
     environment:
       - NEXT_PUBLIC_WS_URL=${WS_URL:-ws://voice-agent:8000/ws}
     ports:
-      - "3000:3000"
+      - "3001:3000"
 ```
 
 ## Performance Optimization Strategies
