@@ -80,6 +80,37 @@ class SentenceCompletionDetector:
         self.current_session_sentences.clear()
         self.last_processed_sentence = ""
 
+class StreamingSentenceDetector:
+    """Simple sentence boundary detection for streaming pipeline"""
+    
+    def __init__(self):
+        # Simple patterns for sentence boundaries
+        self.sentence_endings = re.compile(r'[.!?]+')
+        
+    def find_sentence_boundary(self, text_buffer: str) -> tuple[str, str]:
+        """
+        Find the first complete sentence in text buffer
+        Returns: (complete_sentence, remaining_buffer)
+        """
+        if not text_buffer.strip():
+            return "", text_buffer
+            
+        # Find first sentence ending
+        match = self.sentence_endings.search(text_buffer)
+        if not match:
+            return "", text_buffer
+            
+        # Include the punctuation in the sentence
+        end_pos = match.end()
+        sentence = text_buffer[:end_pos].strip()
+        remaining = text_buffer[end_pos:].strip()
+        
+        # Basic validation - ensure it's not too short
+        if len(sentence.split()) < 3:
+            return "", text_buffer
+            
+        return sentence, remaining
+
 class VoiceOrchestrator:
     def __init__(self):
         self.whisper_host = os.getenv("WHISPER_HOST", "localhost")
@@ -91,6 +122,9 @@ class VoiceOrchestrator:
         
         # Initialize sentence completion detector
         self.sentence_detector = SentenceCompletionDetector()
+        
+        # Initialize streaming sentence detector for pipeline
+        self.streaming_detector = StreamingSentenceDetector()
         
         # WhisperLive client for direct transcription (disabled for now)
         # self.whisper_client = None
@@ -198,6 +232,196 @@ class VoiceOrchestrator:
         except Exception as e:
             logger.error(f"TTS streaming error: {e}")
             yield b""
+
+    async def stream_llm_tokens(self, text: str, context: str = ""):
+        """Stream LLM tokens as they arrive from Ollama"""
+        prompt = f"{context}\n\nUser: {text}\nAssistant:" if context else f"User: {text}\nAssistant:"
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{self.ollama_url}/api/generate",
+                    json={
+                        "model": os.getenv("LLM_MODEL", "gemma3n:latest"),
+                        "prompt": prompt,
+                        "stream": True,
+                        "options": {
+                            "temperature": 0.7,
+                            "top_p": 0.9,
+                            "repeat_penalty": 1.1,
+                            "num_predict": 128  # Limit response length for lower latency
+                        }
+                    }
+                )
+                response.raise_for_status()
+                
+                # Stream tokens as they arrive
+                async for line in response.aiter_lines():
+                    if line:
+                        chunk = json.loads(line)
+                        if chunk.get("response"):
+                            yield chunk["response"]
+                        if chunk.get("done"):
+                            break
+                            
+        except Exception as e:
+            logger.error(f"LLM streaming error: {e}")
+            yield ""
+
+    async def llm_sentence_worker(self, text: str, context: str, sentence_queue: asyncio.Queue):
+        """Worker that streams LLM tokens and detects sentence boundaries"""
+        try:
+            text_buffer = ""
+            sentence_count = 0
+            
+            async for token in self.stream_llm_tokens(text, context):
+                if not token:
+                    continue
+                    
+                text_buffer += token
+                
+                # Check for sentence boundary
+                sentence, remaining = self.streaming_detector.find_sentence_boundary(text_buffer)
+                
+                if sentence:
+                    sentence_count += 1
+                    logger.info(f"LLM Worker: Found sentence {sentence_count}: {sentence[:50]}...")
+                    
+                    # Queue the sentence for TTS processing
+                    await sentence_queue.put({
+                        "sequence": sentence_count,
+                        "text": sentence,
+                        "type": "sentence"
+                    })
+                    
+                    # Update buffer with remaining text
+                    text_buffer = remaining
+            
+            # Handle any remaining text as final sentence
+            if text_buffer.strip():
+                sentence_count += 1
+                logger.info(f"LLM Worker: Final sentence {sentence_count}: {text_buffer[:50]}...")
+                await sentence_queue.put({
+                    "sequence": sentence_count,
+                    "text": text_buffer.strip(),
+                    "type": "final"
+                })
+            
+            # Signal completion
+            await sentence_queue.put({"type": "done"})
+            
+        except Exception as e:
+            logger.error(f"LLM sentence worker error: {e}")
+            await sentence_queue.put({"type": "error", "message": str(e)})
+
+    async def tts_processing_worker(self, sentence_queue: asyncio.Queue, audio_queue: asyncio.Queue):
+        """Worker that processes sentences through TTS streaming"""
+        try:
+            while True:
+                # Get next sentence from queue
+                item = await sentence_queue.get()
+                
+                if item["type"] == "done":
+                    logger.info("TTS Worker: Received done signal")
+                    await audio_queue.put({"type": "done"})
+                    break
+                    
+                if item["type"] == "error":
+                    logger.error(f"TTS Worker: Received error: {item['message']}")
+                    await audio_queue.put(item)
+                    break
+                
+                if item["type"] in ["sentence", "final"]:
+                    sequence = item["sequence"]
+                    text = item["text"]
+                    logger.info(f"TTS Worker: Processing sentence {sequence}: {text[:30]}...")
+                    
+                    # Stream TTS audio for this sentence
+                    audio_chunks = []
+                    async for audio_chunk in self.synthesize_stream(text):
+                        if audio_chunk:
+                            audio_chunks.append(audio_chunk)
+                    
+                    # Queue the complete audio for this sentence
+                    if audio_chunks:
+                        await audio_queue.put({
+                            "sequence": sequence,
+                            "audio_chunks": audio_chunks,
+                            "text": text,
+                            "type": "audio"
+                        })
+                        logger.info(f"TTS Worker: Completed sentence {sequence}, {len(audio_chunks)} chunks")
+                    
+        except Exception as e:
+            logger.error(f"TTS processing worker error: {e}")
+            await audio_queue.put({"type": "error", "message": str(e)})
+
+    async def audio_response_worker(self, audio_queue: asyncio.Queue, session_id: str):
+        """Worker that coordinates audio chunks and streams response"""
+        try:
+            sentence_audio = {}  # Store audio by sequence number
+            next_sequence = 1
+            complete_response = ""
+            
+            while True:
+                # Get next audio item from queue
+                item = await audio_queue.get()
+                
+                if item["type"] == "done":
+                    logger.info("Audio Response Worker: Received done signal")
+                    break
+                    
+                if item["type"] == "error":
+                    logger.error(f"Audio Response Worker: Received error: {item['message']}")
+                    # Fallback to existing pipeline
+                    return
+                
+                if item["type"] == "audio":
+                    sequence = item["sequence"]
+                    audio_chunks = item["audio_chunks"]
+                    text = item["text"]
+                    
+                    # Store audio by sequence
+                    sentence_audio[sequence] = {
+                        "audio_chunks": audio_chunks,
+                        "text": text
+                    }
+                    
+                    logger.info(f"Audio Response Worker: Stored sentence {sequence}")
+                    
+                    # Yield any consecutive sentences starting from next_sequence
+                    while next_sequence in sentence_audio:
+                        sentence_data = sentence_audio[next_sequence]
+                        complete_response += sentence_data["text"] + " "
+                        
+                        # Yield text first
+                        yield {
+                            "type": "text",
+                            "sequence": next_sequence,
+                            "text": sentence_data["text"],
+                            "complete_text": complete_response.strip()
+                        }
+                        
+                        # Then yield audio chunks
+                        for chunk in sentence_data["audio_chunks"]:
+                            yield {
+                                "type": "audio",
+                                "sequence": next_sequence,
+                                "audio_chunk": chunk
+                            }
+                        
+                        # Clean up and move to next
+                        del sentence_audio[next_sequence]
+                        next_sequence += 1
+                        
+                        logger.info(f"Audio Response Worker: Streamed sentence {next_sequence - 1}")
+            
+            # Yield completion
+            yield {"type": "complete", "complete_text": complete_response.strip()}
+            
+        except Exception as e:
+            logger.error(f"Audio response worker error: {e}")
+            yield {"type": "error", "message": str(e)}
     
     async def retrieve_context(self, query: str, session_id: str) -> str:
         """Retrieve conversation context from A-MEM"""
@@ -383,6 +607,151 @@ async def process_transcript_stream(request: TranscriptRequest):
         
     except Exception as e:
         logger.error(f"Streaming pipeline error: {e}")
+        return {"error": str(e)}, 500
+
+@app.post("/process-transcript-pipeline")
+async def process_transcript_pipeline(request: TranscriptRequest):
+    """Ultra-low latency pipeline: LLM streaming + sentence-based TTS with overlapping processing"""
+    try:
+        start_time = time.time()
+        
+        # 1. Check if sentence is complete and ready for processing (using existing logic)
+        is_complete, cleaned_sentence = orchestrator.sentence_detector.is_sentence_complete(request.transcript)
+        
+        if not is_complete:
+            logger.info(f"Sentence not complete, skipping: {request.transcript}")
+            # Return empty stream for incomplete sentences
+            async def empty_stream():
+                yield f"data: {json.dumps({'type': 'incomplete', 'message': 'Sentence not complete'})}\n\n"
+            
+            return StreamingResponse(
+                empty_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "Cache-Control"
+                }
+            )
+        
+        logger.info(f"Ultra-Low Latency Pipeline: Processing sentence: {cleaned_sentence[:50]}...")
+        
+        # 2. Retrieve context if memory enabled
+        context = ""
+        if orchestrator.memory_enabled:
+            try:
+                context = await orchestrator.retrieve_context(cleaned_sentence, request.session_id)
+            except Exception as e:
+                logger.warning(f"Memory retrieval failed: {e}")
+        
+        # 3. Ultra-Low Latency Streaming Pipeline
+        async def ultra_low_latency_stream():
+            """Coordinate LLM streaming + sentence-based TTS processing"""
+            try:
+                # Create queues for worker communication
+                sentence_queue = asyncio.Queue()
+                audio_queue = asyncio.Queue()
+                
+                # Start all workers concurrently
+                workers = [
+                    asyncio.create_task(orchestrator.llm_sentence_worker(cleaned_sentence, context, sentence_queue)),
+                    asyncio.create_task(orchestrator.tts_processing_worker(sentence_queue, audio_queue)),
+                ]
+                
+                # Stream responses as they become available
+                first_response_time = None
+                async for response_item in orchestrator.audio_response_worker(audio_queue, request.session_id):
+                    
+                    if first_response_time is None:
+                        first_response_time = time.time()
+                        ttfr = (first_response_time - start_time) * 1000  # Time to first response
+                        logger.info(f"Ultra-Low Latency Pipeline: TTFR = {ttfr:.2f}ms")
+                    
+                    if response_item["type"] == "text":
+                        # Send text response immediately
+                        data = {
+                            'type': 'text',
+                            'sequence': response_item['sequence'],
+                            'text': response_item['text'],
+                            'complete_text': response_item['complete_text']
+                        }
+                        yield f"data: {json.dumps(data)}\n\n"
+                        
+                    elif response_item["type"] == "audio":
+                        # Send audio chunk
+                        import base64
+                        chunk_b64 = base64.b64encode(response_item["audio_chunk"]).decode()
+                        data = {
+                            'type': 'audio',
+                            'sequence': response_item['sequence'],
+                            'data': chunk_b64
+                        }
+                        yield f"data: {json.dumps(data)}\n\n"
+                        
+                    elif response_item["type"] == "complete":
+                        # Pipeline completed
+                        total_time = (time.time() - start_time) * 1000
+                        logger.info(f"Ultra-Low Latency Pipeline: Total time = {total_time:.2f}ms")
+                        
+                        # Store interaction if memory enabled
+                        if orchestrator.memory_enabled:
+                            try:
+                                await orchestrator.store_interaction(
+                                    cleaned_sentence, 
+                                    response_item["complete_text"], 
+                                    request.session_id
+                                )
+                            except Exception as e:
+                                logger.warning(f"Memory storage failed: {e}")
+                        
+                        data = {
+                            'type': 'complete',
+                            'complete_text': response_item['complete_text'],
+                            'latency_ms': total_time,
+                            'ttfr_ms': (first_response_time - start_time) * 1000 if first_response_time else 0
+                        }
+                        yield f"data: {json.dumps(data)}\n\n"
+                        break
+                        
+                    elif response_item["type"] == "error":
+                        # Error in pipeline - fallback to existing endpoint
+                        logger.error(f"Pipeline error: {response_item['message']}, falling back to sequential processing")
+                        data = {
+                            'type': 'fallback',
+                            'message': 'Pipeline error, falling back to sequential processing'
+                        }
+                        yield f"data: {json.dumps(data)}\n\n"
+                        break
+                
+                # Clean up workers
+                for worker in workers:
+                    if not worker.done():
+                        worker.cancel()
+                await asyncio.gather(*workers, return_exceptions=True)
+                
+            except Exception as e:
+                logger.error(f"Ultra-low latency stream error: {e}")
+                # Fallback error message
+                data = {
+                    'type': 'error',
+                    'message': f'Pipeline error: {str(e)}'
+                }
+                yield f"data: {json.dumps(data)}\n\n"
+        
+        return StreamingResponse(
+            ultra_low_latency_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Cache-Control"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Ultra-low latency pipeline error: {e}")
         return {"error": str(e)}, 500
 
 @app.on_event("startup")

@@ -13,11 +13,17 @@ interface VoiceButtonProps {
 export default function VoiceButton({ onStatusChange, onTranscript, onError }: VoiceButtonProps) {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'recording' | 'processing' | 'error'>('idle');
   const [isRecording, setIsRecording] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   
   const whisperWsRef = useRef<VoiceWebSocket | null>(null);
   const recorderRef = useRef<AudioRecorder | null>(null);
   const playerRef = useRef<AudioPlayer | null>(null);
   const sessionIdRef = useRef<string>(`session_${Date.now()}`);
+  
+  // TTS interruption control
+  const currentStreamControllerRef = useRef<AbortController | null>(null);
+  const voiceActivityRef = useRef<boolean>(false);
+  const bargeInTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const updateStatus = useCallback((newStatus: typeof status) => {
     setStatus(newStatus);
@@ -29,6 +35,44 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
     updateStatus('error');
     onError?.(error);
   }, [onError, updateStatus]);
+  
+  const handleBargeIn = useCallback(() => {
+    console.log('Handling barge-in: stopping TTS and starting recording');
+    
+    // Cancel any ongoing TTS stream
+    if (currentStreamControllerRef.current) {
+      currentStreamControllerRef.current.abort();
+      currentStreamControllerRef.current = null;
+    }
+    
+    // Stop all audio playback immediately
+    if (playerRef.current) {
+      playerRef.current.stopAll();
+    }
+    
+    // Start recording immediately if not already recording and connected
+    if (!isRecording && status === 'connected') {
+      // Use direct recording start to avoid circular dependency
+      if (whisperWsRef.current?.isConnected() && recorderRef.current) {
+        setIsRecording(true);
+        updateStatus('recording');
+        
+        recorderRef.current.start((audioData: Float32Array) => {
+          if (whisperWsRef.current?.isConnected()) {
+            whisperWsRef.current.sendAudio(audioData.buffer);
+          }
+        });
+      }
+    }
+  }, [isRecording, status, updateStatus]);
+  
+  const abortCurrentStream = useCallback(() => {
+    if (currentStreamControllerRef.current) {
+      console.log('Aborting current TTS stream');
+      currentStreamControllerRef.current.abort();
+      currentStreamControllerRef.current = null;
+    }
+  }, []);
   
   useEffect(() => {
     let mounted = true;
@@ -65,10 +109,18 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
           if (mounted) {
             console.log('Complete sentence received:', sentence);
             
+            // Abort any ongoing TTS stream before starting new one
+            abortCurrentStream();
+            
             // Send complete sentence to orchestrator for streaming LLM+TTS processing
             try {
               updateStatus('processing');
-              const response = await fetch('/api/process-transcript-stream', {
+              
+              // Create new AbortController for this stream
+              const streamController = new AbortController();
+              currentStreamControllerRef.current = streamController;
+              
+              const response = await fetch('/api/process-transcript-pipeline', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -76,48 +128,86 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                 body: JSON.stringify({
                   transcript: sentence,
                   session_id: sessionIdRef.current
-                })
+                }),
+                signal: streamController.signal  // Add abort signal
               });
               
               if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
               }
               
-              // Handle streaming response
+              // Handle streaming response with interruption support
               const reader = response.body?.getReader();
               const decoder = new TextDecoder();
               
               if (reader) {
                 let buffer = '';
-                while (true) {
-                  const { done, value } = await reader.read();
-                  if (done) break;
-                  
-                  buffer += decoder.decode(value, { stream: true });
-                  const lines = buffer.split('\n');
-                  buffer = lines.pop() || '';
-                  
-                  for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                      const data = JSON.parse(line.slice(6));
-                      
-                      if (data.type === 'text') {
-                        console.log('LLM Response:', data.data);
-                      } else if (data.type === 'audio' && playerRef.current) {
-                        // Decode PCM chunk and play streaming audio
-                        const audioBytes = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
-                        await playerRef.current.playPCMChunk(audioBytes.buffer);
-                      } else if (data.type === 'complete') {
-                        console.log('Streaming complete, latency:', data.latency_ms);
-                        updateStatus('connected');
+                try {
+                  while (true) {
+                    // Check if stream was aborted
+                    if (streamController.signal.aborted) {
+                      console.log('TTS stream aborted by barge-in');
+                      break;
+                    }
+                    
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+                    
+                    for (const line of lines) {
+                      if (line.startsWith('data: ')) {
+                        const data = JSON.parse(line.slice(6));
+                        
+                        if (data.type === 'text') {
+                          console.log('LLM Response (Sequence', data.sequence + '):', data.text);
+                          console.log('Complete text so far:', data.complete_text);
+                        } else if (data.type === 'audio' && playerRef.current) {
+                          // Check again before playing audio chunk
+                          if (streamController.signal.aborted) {
+                            console.log('Audio chunk skipped due to abort');
+                            break;
+                          }
+                          
+                          // Decode PCM chunk and play streaming audio
+                          const audioBytes = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
+                          await playerRef.current.playPCMChunk(audioBytes.buffer);
+                        } else if (data.type === 'complete') {
+                          console.log('Ultra-low latency pipeline complete');
+                          console.log('Final response:', data.complete_text);
+                          console.log('Total latency:', data.latency_ms + 'ms');
+                          console.log('Time to first response (TTFR):', data.ttfr_ms + 'ms');
+                          updateStatus('connected');
+                          // Clear the controller reference
+                          if (currentStreamControllerRef.current === streamController) {
+                            currentStreamControllerRef.current = null;
+                          }
+                        }
                       }
                     }
                   }
+                } catch (streamError: any) {
+                  if (streamError.name === 'AbortError') {
+                    console.log('TTS stream was aborted');
+                  } else {
+                    throw streamError;
+                  }
+                } finally {
+                  // Ensure reader is closed
+                  reader.releaseLock();
                 }
               }
               
-            } catch (error) {
-              handleError('Failed to process sentence');
+            } catch (error: any) {
+              // Don't treat abort as error
+              if (error.name === 'AbortError') {
+                console.log('TTS request aborted due to barge-in');
+                updateStatus('connected');
+              } else {
+                handleError('Failed to process sentence');
+              }
             }
           }
         });
@@ -132,10 +222,35 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
           throw new Error('Failed to access microphone');
         }
         
+        // Set up voice activity detection for barge-in
+        recorder.onAudioLevel((level) => {
+          const isVoiceActive = recorder.isVoiceActive();
+          voiceActivityRef.current = isVoiceActive;
+          
+          // If we detect voice activity while TTS is playing, trigger barge-in
+          if (isVoiceActive && isPlaying && !isRecording) {
+            console.log('Barge-in detected! Voice level:', level);
+            handleBargeIn();
+          }
+        });
+        
         recorderRef.current = recorder;
         
         // Initialize audio player
-        playerRef.current = new AudioPlayer();
+        const player = new AudioPlayer();
+        
+        // Set up playback state tracking
+        player.onPlaybackStart(() => {
+          console.log('TTS playback started');
+          setIsPlaying(true);
+        });
+        
+        player.onPlaybackEnd(() => {
+          console.log('TTS playback ended');
+          setIsPlaying(false);
+        });
+        
+        playerRef.current = player;
         
       } catch (error) {
         if (mounted) {
@@ -148,6 +263,19 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
     
     return () => {
       mounted = false;
+      
+      // Clean up TTS stream
+      if (currentStreamControllerRef.current) {
+        currentStreamControllerRef.current.abort();
+        currentStreamControllerRef.current = null;
+      }
+      
+      // Clean up timeouts
+      if (bargeInTimeoutRef.current) {
+        clearTimeout(bargeInTimeoutRef.current);
+        bargeInTimeoutRef.current = null;
+      }
+      
       if (whisperWsRef.current) {
         whisperWsRef.current.disconnect();
       }

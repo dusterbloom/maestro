@@ -5,11 +5,8 @@ export class VoiceWebSocket {
   private maxReconnectAttempts = 3;
   private reconnectDelay = 2000;
   
-  // Sentence detection for transcript buffering
-  private transcriptBuffer = '';
-  private sentenceTimer: NodeJS.Timeout | null = null;
-  private readonly sentenceTimeoutMs = 2000; // 2 seconds timeout for sentence completion
-  private lastProcessedSentence = ''; // Track the last processed sentence to prevent duplicates
+  // Simple deduplication for completed segments
+  private processedSegments = new Set<string>();
   
   private onConnectCallback?: () => void;
   private onAudioCallback?: (audio: ArrayBuffer) => void;
@@ -32,6 +29,7 @@ export class VoiceWebSocket {
         this.reconnectAttempts = 0;
         
         // Send initial config exactly like WhisperLive expects (must be first message)
+        // Based on actual WhisperLive Client.on_open implementation
         const config = {
           uid: sessionId || `session_${Date.now()}`,
           language: "en",
@@ -41,9 +39,9 @@ export class VoiceWebSocket {
           max_clients: 4,
           max_connection_time: 600,
           send_last_n_segments: 10,
-          no_speech_thresh: 0.45,
+          no_speech_thresh: 0.45,   // Default from WhisperLive
           clip_audio: false,
-          same_output_threshold: 10
+          same_output_threshold: 10  // Default from WhisperLive
         };
         this.ws?.send(JSON.stringify(config));
         console.log('Sent config to WhisperLive:', config);
@@ -69,15 +67,24 @@ export class VoiceWebSocket {
               this.reconnectAttempts = 0;
               this.onConnectCallback?.();
             } else if (message.segments && message.segments.length > 0) {
-              // Transcription from WhisperLive
-              const transcript = message.segments.map((seg: any) => seg.text || '').join(' ');
-              const isCompleted = message.segments.some((seg: any) => seg.completed === true);
+              // Process each completed segment individually - KISS approach
+              message.segments.forEach((segment: any) => {
+                if (segment.completed && segment.text && segment.text.trim()) {
+                  const text = segment.text.trim();
+                  
+                  // Simple deduplication - process each completed segment once
+                  if (!this.processedSegments.has(text)) {
+                    this.processedSegments.add(text);
+                    console.log('Processing completed segment:', text);
+                    this.onSentenceCallback?.(text);
+                  }
+                }
+              });
               
+              // Still show all transcripts for user feedback
+              const transcript = message.segments.map((seg: any) => seg.text || '').join(' ');
               if (transcript.trim()) {
-                console.log('Transcript received:', transcript);
                 this.onTranscriptCallback?.(transcript);
-                // Only process transcript when WhisperLive indicates it's completed
-                this.processTranscript(transcript, isCompleted);
               }
             }
           } catch (e) {
@@ -130,101 +137,17 @@ export class VoiceWebSocket {
     }
   }
   
-  private processTranscript(transcript: string, isCompleted: boolean = false) {
-    const trimmedTranscript = transcript.trim();
-    
-    // Skip if this is the same transcript we already have in buffer
-    if (trimmedTranscript === this.transcriptBuffer) {
-      return;
-    }
-    
-    // Update buffer with latest transcript
-    this.transcriptBuffer = trimmedTranscript;
-    
-    // Clear existing sentence timer
-    if (this.sentenceTimer) {
-      clearTimeout(this.sentenceTimer);
-    }
-    
-    // If WhisperLive indicates transcription is completed, process immediately
-    if (isCompleted) {
-      console.log('WhisperLive transcription completed:', this.transcriptBuffer);
-      this.emitSentence(this.transcriptBuffer);
-      this.transcriptBuffer = '';
-      return;
-    }
-    
-    // For incomplete transcripts, only use timeout as backup - don't process on punctuation
-    // This prevents processing the same sentence multiple times while WhisperLive is still transcribing
-    this.sentenceTimer = setTimeout(() => {
-      if (this.transcriptBuffer.trim()) {
-        // Only process if we have a sentence-like structure or significant content
-        const sentenceEndPattern = /[.!?]\s*$/;
-        const hasMinimumWords = this.transcriptBuffer.trim().split(/\s+/).length >= 3;
-        
-        if (sentenceEndPattern.test(this.transcriptBuffer) && hasMinimumWords) {
-          console.log('Sentence timeout - emitting:', this.transcriptBuffer);
-          this.emitSentence(this.transcriptBuffer);
-          this.transcriptBuffer = '';
-        } else {
-          console.log('Incomplete sentence on timeout, waiting longer:', this.transcriptBuffer);
-          // Extend timeout for incomplete sentences
-          this.sentenceTimer = setTimeout(() => {
-            if (this.transcriptBuffer.trim()) {
-              console.log('Extended timeout - emitting:', this.transcriptBuffer);
-              this.emitSentence(this.transcriptBuffer);
-              this.transcriptBuffer = '';
-            }
-          }, this.sentenceTimeoutMs);
-        }
-      }
-    }, this.sentenceTimeoutMs);
-  }
-  
-  private emitSentence(sentence: string) {
-    const trimmedSentence = sentence.trim();
-    
-    // Prevent duplicate processing of the same sentence
-    if (trimmedSentence === this.lastProcessedSentence) {
-      console.log('Duplicate sentence detected, skipping:', trimmedSentence);
-      return;
-    }
-    
-    // Prevent processing sentences that are just extensions of the previous one
-    // This catches cases like "Hello there." → "Hello there, can you tell me?"
-    if (this.lastProcessedSentence && trimmedSentence.startsWith(this.lastProcessedSentence.replace(/[.!?]+$/, '').trim())) {
-      console.log('Sentence extension detected, skipping:', trimmedSentence);
-      return;
-    }
-    
-    this.lastProcessedSentence = trimmedSentence;
-    console.log('Complete sentence received:', trimmedSentence);
-    this.onSentenceCallback?.(trimmedSentence);
-  }
 
   disconnect() {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this.sentenceTimer) {
-      clearTimeout(this.sentenceTimer);
-      this.sentenceTimer = null;
-    }
     if (this.ws) {
       this.ws.close(1000, 'Client disconnect');
       this.ws = null;
     }
-    this.resetSentenceTracking();
-  }
-  
-  resetSentenceTracking() {
-    this.transcriptBuffer = '';
-    this.lastProcessedSentence = '';
-    if (this.sentenceTimer) {
-      clearTimeout(this.sentenceTimer);
-      this.sentenceTimer = null;
-    }
+    this.processedSegments.clear();
   }
   
   isConnected(): boolean {

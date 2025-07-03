@@ -1,0 +1,48 @@
+[
+  {
+    "test_type": "silence_detection",
+    "duration_seconds": 2.0,
+    "processing_time_ms": 8498.756170272827,
+    "vad_triggered": false,
+    "transcription_count": 0,
+    "expected_vad": false,
+    "accuracy": "pass"
+  },
+  {
+    "test_type": "silence_detection",
+    "duration_seconds": 5.0,
+    "processing_time_ms": 2290.774345397949,
+    "vad_triggered": false,
+    "transcription_count": 0,
+    "expected_vad": false,
+    "accuracy": "pass"
+  },
+  {
+    "test_type": "vad_sensitivity",
+    "thresholds_tested": [
+      0.3,
+      0.5,
+      0.7
+    ],
+    "results": [
+      {
+        "threshold": 0.3,
+        "vad_triggered": false,
+        "transcription_count": 0,
+        "processing_time_ms": 1039.4973754882812
+      },
+      {
+        "threshold": 0.5,
+        "vad_triggered": false,
+        "transcription_count": 0,
+        "processing_time_ms": 1034.883975982666
+      },
+      {
+        "threshold": 0.7,
+        "vad_triggered": false,
+        "transcription_count": 0,
+        "processing_time_ms": 1039.6368503570557
+      }
+    ]
+  }
+]
