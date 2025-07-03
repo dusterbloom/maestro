@@ -226,9 +226,9 @@ if ! curl -s http://localhost:11434/api/tags >/dev/null; then
 fi
 
 # Pull required model if not present
-if ! curl -s http://localhost:11434/api/tags | grep -q "gemma2:2b"; then
-    echo "📥 Pulling gemma2:2b model..."
-    ollama pull gemma2:2b
+if ! curl -s http://localhost:11434/api/tags | grep -q "gemma3n:latest"; then
+    echo "📥 Pulling gemma3n:latest model..."
+    ollama pull gemma3n:latest
 fi
 
 # Create .env from example

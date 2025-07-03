@@ -22,7 +22,7 @@ services:
       context: ./ui
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - NEXT_PUBLIC_WS_URL=ws://orchestrator:8000/ws
     depends_on:
@@ -215,7 +215,7 @@ class VoiceOrchestrator:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{self.ollama_url}/api/generate",
-                json={"model": "gemma2:2b", "prompt": prompt, "stream": False}
+                json={"model": "gemma3n:latest", "prompt": prompt, "stream": False}
             )
             return resp.json()["response"]
     
@@ -263,7 +263,7 @@ pipeline:
     
   llm:
     provider: ollama
-    model: gemma2:2b
+    model: gemma3n:latest
     max_tokens: 150
     temperature: 0.7
     
@@ -371,7 +371,7 @@ REDIS_URL=redis://redis:6379
 # Model Configuration
 EMBEDDING_MODEL=nomic-embed-text
 STT_MODEL=tiny
-LLM_MODEL=gemma2:2b
+LLM_MODEL=gemma3n:latest
 TTS_VOICE=af_bella
 
 # Performance
