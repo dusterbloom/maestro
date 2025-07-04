@@ -120,7 +120,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
               const streamController = new AbortController();
               currentStreamControllerRef.current = streamController;
               
-              const response = await fetch('/api/process-transcript-pipeline', {
+              const response = await fetch('/api/process-transcript', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -136,67 +136,43 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                 throw new Error(`HTTP ${response.status}`);
               }
               
-              // Handle streaming response with interruption support
-              const reader = response.body?.getReader();
-              const decoder = new TextDecoder();
+              // Handle ultra-fast response (non-streaming)
+              const data = await response.json();
               
-              if (reader) {
-                let buffer = '';
-                try {
-                  while (true) {
-                    // Check if stream was aborted
-                    if (streamController.signal.aborted) {
-                      console.log('TTS stream aborted by barge-in');
-                      break;
-                    }
-                    
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop() || '';
-                    
-                    for (const line of lines) {
-                      if (line.startsWith('data: ')) {
-                        const data = JSON.parse(line.slice(6));
-                        
-                        if (data.type === 'text') {
-                          console.log('LLM Response (Sequence', data.sequence + '):', data.text);
-                          console.log('Complete text so far:', data.complete_text);
-                        } else if (data.type === 'audio' && playerRef.current) {
-                          // Check again before playing audio chunk
-                          if (streamController.signal.aborted) {
-                            console.log('Audio chunk skipped due to abort');
-                            break;
-                          }
-                          
-                          // Decode PCM chunk and play streaming audio
-                          const audioBytes = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
-                          await playerRef.current.playPCMChunk(audioBytes.buffer);
-                        } else if (data.type === 'complete') {
-                          console.log('Ultra-low latency pipeline complete');
-                          console.log('Final response:', data.complete_text);
-                          console.log('Total latency:', data.latency_ms + 'ms');
-                          console.log('Time to first response (TTFR):', data.ttfr_ms + 'ms');
-                          updateStatus('connected');
-                          // Clear the controller reference
-                          if (currentStreamControllerRef.current === streamController) {
-                            currentStreamControllerRef.current = null;
-                          }
-                        }
-                      }
-                    }
-                  }
-                } catch (streamError: any) {
-                  if (streamError.name === 'AbortError') {
-                    console.log('TTS stream was aborted');
-                  } else {
-                    throw streamError;
-                  }
-                } finally {
-                  // Ensure reader is closed
-                  reader.releaseLock();
+              if (data.type === 'wav_audio' && data.data && playerRef.current) {
+                // Check if stream was aborted
+                if (streamController.signal.aborted) {
+                  console.log('Audio playback skipped due to abort');
+                  return;
+                }
+                
+                console.log('LLM Response:', data.response_text);
+                console.log('Total latency:', data.latency_ms + 'ms');
+                
+                // Decode WAV audio data and play complete audio
+                const audioBytes = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
+                await playerRef.current.play(audioBytes.buffer);
+                
+                updateStatus('connected');
+                // Clear the controller reference
+                if (currentStreamControllerRef.current === streamController) {
+                  currentStreamControllerRef.current = null;
+                }
+              } else if (data.type === 'error') {
+                console.error('TTS Error:', data.message);
+                console.log('LLM Response (no audio):', data.response_text);
+                updateStatus('connected');
+                // Clear the controller reference
+                if (currentStreamControllerRef.current === streamController) {
+                  currentStreamControllerRef.current = null;
+                }
+              } else {
+                console.log('Unexpected response format:', data);
+                console.log('Response type:', data.type, 'Has data:', !!data.data);
+                updateStatus('connected');
+                // Clear the controller reference
+                if (currentStreamControllerRef.current === streamController) {
+                  currentStreamControllerRef.current = null;
                 }
               }
               
