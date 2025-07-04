@@ -278,7 +278,7 @@ class VoiceOrchestrator:
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
                 json={
-                    "model": "gemma:2b",  # Use fastest 2B model
+                    "model": os.getenv("LLM_MODEL", "gemma3n:latest"),  # Use configured model
                     "prompt": f"Answer briefly: {text}",
                     "stream": False,  # Non-streaming for now to debug
                     "options": {
