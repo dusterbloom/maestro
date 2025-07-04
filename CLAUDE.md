@@ -10,12 +10,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 2. **SEARCH FIRST, CODE SECOND**: Before providing any solution, search for and examine actual implementations using MCP tools
 3. **VERIFY PROTOCOLS**: For any API/WebSocket/protocol integration, find and examine the real implementation code
 4. **SOURCE OR STOP**: If you cannot find authoritative sources, explicitly state limitations rather than making assumptions
+5. **NO ASSUMPTIONS EVER**: Never assume formats, endpoints, or protocols. Always verify first.
+6. **DEBUG CURRENT STATE**: When something isn't working, examine the current state before making changes
 
-**PROHIBITED APPROACHES:**
+**PROHIBITED APPROACHES - THESE WILL CAUSE IMMEDIATE FAILURE:**
 - Assuming WebSocket protocols without examining actual source code
 - Providing "typical" FastAPI patterns without verifying target service requirements
 - Making educated guesses about Docker service configurations
 - Extrapolating from general documentation when service-specific implementation exists
+- Creating new endpoints without verifying current ones work
+- Assuming audio formats without examining actual data
+- Making changes without understanding the current problem
+- Backtracking or creating workarounds instead of fixing root issues
 
 **REQUIRED VERIFICATION PROCESS:**
 Before implementing any integration:
@@ -25,9 +31,21 @@ Before implementing any integration:
 4. Reference specific code examples and documentation URLs
 5. If verification fails, state: "I cannot find verified implementation details for [X], so I cannot provide a reliable solution"
 
+**DEBUGGING WORKFLOW - MANDATORY FOR ALL ISSUES:**
+When something isn't working:
+1. **EXAMINE CURRENT STATE FIRST**: Read logs, check actual API responses, verify current behavior
+2. **IDENTIFY ROOT CAUSE**: Don't make changes until you understand what's actually broken
+3. **VERIFY SINGLE ISSUE**: Fix one specific problem, don't create new solutions
+4. **TEST INCREMENTALLY**: Verify each change works before making another
+5. **NO WORKAROUNDS**: Fix the actual problem, don't create alternatives
+
 **EXAMPLE - WhisperLive Integration:**
 - ✅ Correct: "Using Deep Graph MCP to examine `collabora/WhisperLive` source code..." → finds actual WebSocket protocol
 - ❌ Incorrect: "WhisperLive typically uses WebSocket connections that expect..." [without source verification]
+
+**EXAMPLE - Audio Issues:**
+- ✅ Correct: "Let me check the browser console for audio errors and examine the actual audio data being received"
+- ❌ Incorrect: "The audio format might be wrong, let me create a new endpoint" [making assumptions without verification]
 
 ---
 
