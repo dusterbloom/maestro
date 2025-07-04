@@ -79,7 +79,7 @@ export class AudioRecorder {
   }
   
   start(onAudioData: (audioData: Float32Array) => void) {
-    if (!this.audioContext || !this.processor) {
+    if (!this.audioContext || !this.workletNode) {
       throw new Error('Audio recorder not initialized');
     }
     
@@ -90,11 +90,19 @@ export class AudioRecorder {
     if (this.audioContext.state === 'suspended') {
       this.audioContext.resume();
     }
+    
+    // Send start message to worklet
+    this.workletNode.port.postMessage({ type: 'start' });
   }
   
   stop() {
     this.isRecording = false;
     this.onAudioDataCallback = undefined;
+    
+    // Send stop message to worklet
+    if (this.workletNode) {
+      this.workletNode.port.postMessage({ type: 'stop' });
+    }
   }
   
   /**
