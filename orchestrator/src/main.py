@@ -117,7 +117,7 @@ class VoiceOrchestrator:
         self.whisper_host = os.getenv("WHISPER_HOST", "localhost")
         self.whisper_port = int(os.getenv("WHISPER_PORT", "9090"))
         self.ollama_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
-        self.tts_url = os.getenv("TTS_URL", "http://kokoro:8880/v1")
+        self.tts_url = os.getenv("TTS_URL", "http://kokoro:8880")
         self.memory_enabled = os.getenv("MEMORY_ENABLED", "false").lower() == "true"
         self.amem_url = os.getenv("AMEM_URL", "http://a-mem:8001")
         
