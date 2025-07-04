@@ -162,16 +162,24 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                         const data = JSON.parse(line.slice(6));
                         
                         if (data.type === 'text') {
-                          console.log('LLM Response (Sequence', data.sequence + '):', data.text);
-                          console.log('Complete text so far:', data.complete_text);
+                          console.log('LLM Response:', data.text);
+                        } else if (data.type === 'wav_audio' && playerRef.current) {
+                          // Check again before playing audio
+                          if (streamController.signal.aborted) {
+                            console.log('Audio playback skipped due to abort');
+                            break;
+                          }
+                          
+                          // Decode WAV audio data and play complete audio
+                          const audioBytes = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
+                          await playerRef.current.play(audioBytes.buffer);
                         } else if (data.type === 'audio' && playerRef.current) {
-                          // Check again before playing audio chunk
+                          // Handle PCM chunks (for streaming TTS)
                           if (streamController.signal.aborted) {
                             console.log('Audio chunk skipped due to abort');
                             break;
                           }
                           
-                          // Decode PCM chunk and play streaming audio
                           const audioBytes = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
                           await playerRef.current.playPCMChunk(audioBytes.buffer);
                         } else if (data.type === 'complete') {
