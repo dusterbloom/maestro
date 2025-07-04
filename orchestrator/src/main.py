@@ -105,7 +105,7 @@ class StreamingSentenceDetector:
         sentence = text_buffer[:end_pos].strip()
         remaining = text_buffer[end_pos:].strip()
         
-        # Basic validation - ensure it's not too short
+        # Keep punctuation-based validation - safer approach
         if len(sentence.split()) < 3:
             return "", text_buffer
             
@@ -186,15 +186,19 @@ class VoiceOrchestrator:
             return "I'm sorry, I couldn't process your request right now."
     
     async def synthesize(self, text: str) -> bytes:
-        """Convert text to speech using Kokoro TTS"""
+        """Convert text to speech using Kokoro TTS with optimized parameters"""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{self.tts_url}/audio/speech",
+                    f"{self.tts_url}/v1/audio/speech",  # Verified endpoint from source
                     json={
+                        "model": "kokoro",  # Required parameter from source
                         "input": text,
                         "voice": os.getenv("TTS_VOICE", "af_bella"),
-                        "response_format": "wav"
+                        "response_format": "wav",  # Keep WAV for non-streaming
+                        "stream": False,
+                        "speed": float(os.getenv("TTS_SPEED", "1.3")),
+                        "volume_multiplier": float(os.getenv("TTS_VOLUME", "1.0"))
                     }
                 )
                 response.raise_for_status()
@@ -205,27 +209,27 @@ class VoiceOrchestrator:
             return b""
     
     async def synthesize_stream(self, text: str):
-        """Stream text to speech using Kokoro FastAPI streaming"""
+        """Stream text to speech using Kokoro FastAPI with optimized parameters"""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                # Use Kokoro FastAPI streaming with improved parameters for quality
+                # Use Kokoro FastAPI streaming with optimized parameters for ultra-low latency
                 async with client.stream(
                     "POST",
-                    f"{self.tts_url}/audio/speech",
+                    f"{self.tts_url}/v1/audio/speech",  # Verified endpoint from source
                     json={
                         "model": "kokoro",
                         "input": text,
                         "voice": os.getenv("TTS_VOICE", "af_bella"),
-                        "response_format": "pcm",
+                        "response_format": "pcm",  # PCM for lowest latency
                         "stream": True,
-                        "speed": float(os.getenv("TTS_SPEED", "1.4")),  # Faster speech for less robotic feel
+                        "speed": float(os.getenv("TTS_SPEED", "1.3")),  # Optimized speed
                         "volume_multiplier": float(os.getenv("TTS_VOLUME", "1.0"))
                     }
                 ) as response:
                     response.raise_for_status()
                     
-                    # Stream PCM chunks (each chunk is typically 512 bytes)
-                    async for chunk in response.aiter_bytes(chunk_size=512):
+                    # Stream PCM chunks with smaller chunk size for lower latency
+                    async for chunk in response.aiter_bytes(chunk_size=256):
                         if chunk:
                             yield chunk
                             
@@ -234,7 +238,7 @@ class VoiceOrchestrator:
             yield b""
 
     async def stream_llm_tokens(self, text: str, context: str = ""):
-        """Stream LLM tokens as they arrive from Ollama"""
+        """Stream LLM tokens as they arrive from Ollama with optimized parameters"""
         prompt = f"{context}\n\nUser: {text}\nAssistant:" if context else f"User: {text}\nAssistant:"
         
         try:
@@ -249,20 +253,27 @@ class VoiceOrchestrator:
                             "temperature": 0.7,
                             "top_p": 0.9,
                             "repeat_penalty": 1.1,
-                            "num_predict": 128  # Limit response length for lower latency
+                            "num_predict": 96,  # Reduced for lower latency
+                            "num_ctx": 2048,    # Reduced context for speed
+                            "num_batch": 8,     # Smaller batch size for faster streaming
+                            "num_thread": 4     # Optimize thread count
                         }
                     }
                 )
                 response.raise_for_status()
                 
-                # Stream tokens as they arrive
+                # Stream tokens as they arrive - immediately yield each token
                 async for line in response.aiter_lines():
                     if line:
-                        chunk = json.loads(line)
-                        if chunk.get("response"):
-                            yield chunk["response"]
-                        if chunk.get("done"):
-                            break
+                        try:
+                            chunk = json.loads(line)
+                            if chunk.get("response"):
+                                yield chunk["response"]
+                            if chunk.get("done"):
+                                break
+                        except json.JSONDecodeError:
+                            # Skip malformed JSON lines
+                            continue
                             
         except Exception as e:
             logger.error(f"LLM streaming error: {e}")

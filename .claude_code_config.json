@@ -37,7 +37,7 @@
         "collabora/WhisperLive",
         "ollama/ollama",
         "FastAPI/FastAPI",
-        "https://github.com/remsky/Kokoro-FastAPI"
+        "remsky/Kokoro-FastAPI"
         ]
       }
   }
