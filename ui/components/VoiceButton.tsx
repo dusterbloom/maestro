@@ -158,9 +158,22 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                 if (currentStreamControllerRef.current === streamController) {
                   currentStreamControllerRef.current = null;
                 }
-              } else {
-                console.log('No audio data received or invalid format');
+              } else if (data.type === 'error') {
+                console.error('TTS Error:', data.message);
+                console.log('LLM Response (no audio):', data.response_text);
                 updateStatus('connected');
+                // Clear the controller reference
+                if (currentStreamControllerRef.current === streamController) {
+                  currentStreamControllerRef.current = null;
+                }
+              } else {
+                console.log('Unexpected response format:', data);
+                console.log('Response type:', data.type, 'Has data:', !!data.data);
+                updateStatus('connected');
+                // Clear the controller reference
+                if (currentStreamControllerRef.current === streamController) {
+                  currentStreamControllerRef.current = null;
+                }
               }
               
             } catch (error: any) {
