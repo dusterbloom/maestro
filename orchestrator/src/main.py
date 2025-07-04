@@ -636,6 +636,63 @@ async def process_transcript_stream(request: TranscriptRequest):
         logger.error(f"Streaming pipeline error: {e}")
         return {"error": str(e)}, 500
 
+@app.post("/ultra-low-latency")
+async def ultra_low_latency(request: TranscriptRequest):
+    """Ultra-low latency pipeline: stream LLM tokens directly to TTS"""
+    try:
+        start_time = time.time()
+        
+        # Skip sentence completion check for maximum speed
+        logger.info(f"Ultra-Low Latency: Processing: {request.transcript[:30]}...")
+        
+        # Retrieve context if memory enabled
+        context = ""
+        if orchestrator.memory_enabled:
+            try:
+                context = await orchestrator.retrieve_context(request.transcript, request.session_id)
+            except Exception as e:
+                logger.warning(f"Memory retrieval failed: {e}")
+        
+        async def ultra_stream():
+            """Direct LLM-to-TTS streaming"""
+            first_audio = None
+            
+            async for chunk in orchestrator.stream_llm_to_tts(request.transcript, context):
+                if chunk["type"] == "audio":
+                    if first_audio is None:
+                        first_audio = time.time()
+                        ttfa = (first_audio - start_time) * 1000  # Time to first audio
+                        logger.info(f"Ultra-Low Latency: TTFA = {ttfa:.2f}ms")
+                    
+                    import base64
+                    chunk_b64 = base64.b64encode(chunk["data"]).decode()
+                    yield f"data: {{\"type\": \"audio\", \"data\": \"{chunk_b64}\", \"text\": \"{chunk['text']}\"}}\n\n"
+                    
+                elif chunk["type"] == "complete":
+                    total_time = (time.time() - start_time) * 1000
+                    logger.info(f"Ultra-Low Latency: Total = {total_time:.2f}ms")
+                    
+                    yield f"data: {{\"type\": \"complete\", \"latency_ms\": {total_time}, \"ttfa_ms\": {(first_audio - start_time) * 1000 if first_audio else 0}}}\n\n"
+                    break
+                    
+                elif chunk["type"] == "error":
+                    yield f"data: {{\"type\": \"error\", \"message\": \"{chunk['message']}\"}}\n\n"
+                    break
+        
+        return StreamingResponse(
+            ultra_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Ultra-low latency error: {e}")
+        return {"error": str(e)}, 500
+
 @app.post("/process-transcript-pipeline")
 async def process_transcript_pipeline(request: TranscriptRequest):
     """Ultra-low latency pipeline: LLM streaming + sentence-based TTS with overlapping processing"""
@@ -676,19 +733,9 @@ async def process_transcript_pipeline(request: TranscriptRequest):
         async def ultra_low_latency_stream():
             """Coordinate LLM streaming + sentence-based TTS processing"""
             try:
-                # Create queues for worker communication
-                sentence_queue = asyncio.Queue()
-                audio_queue = asyncio.Queue()
-                
-                # Start all workers concurrently
-                workers = [
-                    asyncio.create_task(orchestrator.llm_sentence_worker(cleaned_sentence, context, sentence_queue)),
-                    asyncio.create_task(orchestrator.tts_processing_worker(sentence_queue, audio_queue)),
-                ]
-                
-                # Stream responses as they become available
+                # Use the new ultra-low latency method
                 first_response_time = None
-                async for response_item in orchestrator.audio_response_worker(audio_queue, request.session_id):
+                async for response_item in orchestrator.stream_llm_to_tts(cleaned_sentence, context):
                     
                     if first_response_time is None:
                         first_response_time = time.time()
