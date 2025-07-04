@@ -239,43 +239,30 @@ class VoiceOrchestrator:
             yield b""
 
     async def stream_llm_tokens(self, text: str, context: str = ""):
-        """Stream LLM tokens as they arrive from Ollama with optimized parameters"""
+        """Stream LLM tokens using native ollama client for maximum performance"""
         prompt = f"{context}\n\nUser: {text}\nAssistant:" if context else f"User: {text}\nAssistant:"
         
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.ollama_url}/api/generate",
-                    json={
-                        "model": os.getenv("LLM_MODEL", "gemma3n:latest"),
-                        "prompt": prompt,
-                        "stream": True,
-                        "options": {
-                            "temperature": 0.7,
-                            "top_p": 0.9,
-                            "repeat_penalty": 1.1,
-                            "num_predict": 96,  # Reduced for lower latency
-                            "num_ctx": 2048,    # Reduced context for speed
-                            "num_batch": 8,     # Smaller batch size for faster streaming
-                            "num_thread": 4     # Optimize thread count
-                        }
-                    }
-                )
-                response.raise_for_status()
-                
-                # Stream tokens as they arrive - immediately yield each token
-                async for line in response.aiter_lines():
-                    if line:
-                        try:
-                            chunk = json.loads(line)
-                            if chunk.get("response"):
-                                yield chunk["response"]
-                            if chunk.get("done"):
-                                break
-                        except json.JSONDecodeError:
-                            # Skip malformed JSON lines
-                            continue
-                            
+            # Use native ollama streaming for best performance
+            client = ollama.AsyncClient(host=self.ollama_url)
+            stream = await client.generate(
+                model=os.getenv("LLM_MODEL", "gemma3n:latest"),
+                prompt=prompt,
+                stream=True,
+                options={
+                    "num_predict": 64,      # Very short responses for low latency
+                    "temperature": 0.3,     # Lower temperature for faster generation
+                    "top_p": 0.8,
+                    "num_ctx": 1024,        # Minimal context for speed
+                }
+            )
+            
+            async for chunk in stream:
+                if chunk.get('response'):
+                    yield chunk['response']
+                if chunk.get('done'):
+                    break
+                    
         except Exception as e:
             logger.error(f"LLM streaming error: {e}")
             yield ""
