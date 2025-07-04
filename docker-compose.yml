@@ -3,7 +3,8 @@ services:
     build:
       context: ./orchestrator
       dockerfile: Dockerfile
-    network_mode: "host"
+    ports:
+      - "8000:8000"
     environment:
       - WHISPER_URL=${WHISPER_URL:-http://whisper-live:9090}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
