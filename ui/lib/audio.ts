@@ -1,7 +1,7 @@
 export class AudioRecorder {
   private audioContext: AudioContext | null = null;
   private stream: MediaStream | null = null;
-  private processor: ScriptProcessorNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
   private mediaStreamSource: MediaStreamAudioSourceNode | null = null;
   private isRecording = false;
   private onAudioDataCallback?: (audioData: Float32Array) => void;
@@ -29,47 +29,47 @@ export class AudioRecorder {
       // Create audio context (will use default sample rate)
       this.audioContext = new AudioContext();
       
+      // Load AudioWorklet processor
+      await this.audioContext.audioWorklet.addModule('/audio-processor.js');
+      
       // Create media stream source
       this.mediaStreamSource = this.audioContext.createMediaStreamSource(this.stream);
       
-      // Create script processor for raw audio data (4096 buffer size)
-      this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+      // Create AudioWorkletNode
+      this.workletNode = new AudioWorkletNode(this.audioContext, 'audio-processor');
       
-      // Handle audio processing like WhisperLive Chrome Extension
-      this.processor.onaudioprocess = (event) => {
-        const inputData = event.inputBuffer.getChannelData(0);
+      // Handle messages from worklet
+      this.workletNode.port.onmessage = (event) => {
+        const { type, data } = event.data;
         
-        // Calculate current audio level (RMS)
-        let sum = 0;
-        for (let i = 0; i < inputData.length; i++) {
-          sum += inputData[i] * inputData[i];
+        switch (type) {
+          case 'audioLevel':
+            this.currentAudioLevel = data.level;
+            
+            // Update voice activity detection
+            const now = Date.now();
+            if (data.isActive) {
+              this.lastVoiceActivityTime = now;
+              this.silenceDuration = 0;
+            } else {
+              this.silenceDuration = now - this.lastVoiceActivityTime;
+            }
+            
+            // Notify about audio level for barge-in detection
+            this.onAudioLevelCallback?.(this.currentAudioLevel);
+            break;
+            
+          case 'audioData':
+            if (this.isRecording && this.onAudioDataCallback) {
+              this.onAudioDataCallback(data.audioData);
+            }
+            break;
         }
-        this.currentAudioLevel = Math.sqrt(sum / inputData.length);
-        
-        // Update voice activity detection
-        const now = Date.now();
-        if (this.currentAudioLevel > this.voiceActivityThreshold) {
-          this.lastVoiceActivityTime = now;
-          this.silenceDuration = 0;
-        } else {
-          this.silenceDuration = now - this.lastVoiceActivityTime;
-        }
-        
-        // Notify about audio level for barge-in detection
-        this.onAudioLevelCallback?.(this.currentAudioLevel);
-        
-        if (!this.isRecording || !this.onAudioDataCallback) return;
-        
-        // Resample to 16kHz like Chrome Extension
-        const resampledData = this.resampleTo16kHz(inputData, this.audioContext!.sampleRate);
-        
-        // Send resampled data
-        this.onAudioDataCallback(resampledData);
       };
       
       // Connect the audio processing chain
-      this.mediaStreamSource.connect(this.processor);
-      this.processor.connect(this.audioContext.destination);
+      this.mediaStreamSource.connect(this.workletNode);
+      this.workletNode.connect(this.audioContext.destination);
       
       return true;
     } catch (error) {
