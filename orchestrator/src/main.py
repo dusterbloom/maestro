@@ -463,6 +463,33 @@ async def health():
         "timestamp": time.time()
     })
 
+@app.post("/warmup")
+async def warmup():
+    """Warm up the Ollama model for faster subsequent responses"""
+    try:
+        start_time = time.time()
+        
+        # Quick warm-up generation
+        client = ollama.AsyncClient(host=orchestrator.ollama_url)
+        await client.generate(
+            model=os.getenv("LLM_MODEL", "gemma3n:latest"),
+            prompt="Hi",
+            options={"num_predict": 1}
+        )
+        
+        warmup_time = (time.time() - start_time) * 1000
+        logger.info(f"Model warmed up in {warmup_time:.2f}ms")
+        
+        return {
+            "status": "warmed_up",
+            "warmup_time_ms": warmup_time,
+            "model": os.getenv("LLM_MODEL", "gemma3n:latest")
+        }
+        
+    except Exception as e:
+        logger.error(f"Warmup error: {e}")
+        return {"error": str(e)}, 500
+
 @app.get("/whisper-info")
 async def whisper_info():
     """Get WhisperLive connection info"""
