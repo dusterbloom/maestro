@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
     
     // Forward request to orchestrator ultra-low latency pipeline endpoint
     const orchestratorUrl = process.env.ORCHESTRATOR_URL || 'http://localhost:8000';
-    const response = await fetch(`${orchestratorUrl}/process-transcript-pipeline`, {
+    const response = await fetch(`${orchestratorUrl}/ultra-fast`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

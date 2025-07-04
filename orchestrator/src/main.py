@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -6,6 +7,7 @@ import time
 import re
 from typing import Optional
 import httpx
+import ollama
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -105,7 +107,7 @@ class StreamingSentenceDetector:
         sentence = text_buffer[:end_pos].strip()
         remaining = text_buffer[end_pos:].strip()
         
-        # Basic validation - ensure it's not too short
+        # Keep punctuation-based validation - safer approach
         if len(sentence.split()) < 3:
             return "", text_buffer
             
@@ -116,7 +118,7 @@ class VoiceOrchestrator:
         self.whisper_host = os.getenv("WHISPER_HOST", "localhost")
         self.whisper_port = int(os.getenv("WHISPER_PORT", "9090"))
         self.ollama_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
-        self.tts_url = os.getenv("TTS_URL", "http://kokoro:8880/v1")
+        self.tts_url = os.getenv("TTS_URL", "http://kokoro:8880")
         self.memory_enabled = os.getenv("MEMORY_ENABLED", "false").lower() == "true"
         self.amem_url = os.getenv("AMEM_URL", "http://a-mem:8001")
         
@@ -186,15 +188,19 @@ class VoiceOrchestrator:
             return "I'm sorry, I couldn't process your request right now."
     
     async def synthesize(self, text: str) -> bytes:
-        """Convert text to speech using Kokoro TTS"""
+        """Convert text to speech using Kokoro TTS with optimized parameters"""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{self.tts_url}/audio/speech",
+                    f"{self.tts_url}/v1/audio/speech",  # Correct Kokoro endpoint
                     json={
+                        "model": "kokoro",  # Required parameter from source
                         "input": text,
                         "voice": os.getenv("TTS_VOICE", "af_bella"),
-                        "response_format": "wav"
+                        "response_format": "wav",  # Keep WAV for non-streaming
+                        "stream": False,
+                        "speed": float(os.getenv("TTS_SPEED", "1.3")),
+                        "volume_multiplier": float(os.getenv("TTS_VOLUME", "1.0"))
                     }
                 )
                 response.raise_for_status()
@@ -205,27 +211,27 @@ class VoiceOrchestrator:
             return b""
     
     async def synthesize_stream(self, text: str):
-        """Stream text to speech using Kokoro FastAPI streaming"""
+        """Stream text to speech using Kokoro FastAPI with optimized parameters"""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                # Use Kokoro FastAPI streaming with improved parameters for quality
+                # Use Kokoro FastAPI streaming with optimized parameters for ultra-low latency
                 async with client.stream(
                     "POST",
-                    f"{self.tts_url}/audio/speech",
+                    f"{self.tts_url}/v1/audio/speech",  # Correct Kokoro endpoint
                     json={
                         "model": "kokoro",
                         "input": text,
                         "voice": os.getenv("TTS_VOICE", "af_bella"),
-                        "response_format": "pcm",
+                        "response_format": "pcm",  # PCM for lowest latency
                         "stream": True,
-                        "speed": float(os.getenv("TTS_SPEED", "1.4")),  # Faster speech for less robotic feel
+                        "speed": float(os.getenv("TTS_SPEED", "1.3")),  # Optimized speed
                         "volume_multiplier": float(os.getenv("TTS_VOLUME", "1.0"))
                     }
                 ) as response:
                     response.raise_for_status()
                     
-                    # Stream PCM chunks (each chunk is typically 512 bytes)
-                    async for chunk in response.aiter_bytes(chunk_size=512):
+                    # Stream PCM chunks with smaller chunk size for lower latency
+                    async for chunk in response.aiter_bytes(chunk_size=256):
                         if chunk:
                             yield chunk
                             
@@ -234,85 +240,102 @@ class VoiceOrchestrator:
             yield b""
 
     async def stream_llm_tokens(self, text: str, context: str = ""):
-        """Stream LLM tokens as they arrive from Ollama"""
+        """Stream LLM tokens using native ollama client for maximum performance"""
         prompt = f"{context}\n\nUser: {text}\nAssistant:" if context else f"User: {text}\nAssistant:"
         
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.ollama_url}/api/generate",
-                    json={
-                        "model": os.getenv("LLM_MODEL", "gemma3n:latest"),
-                        "prompt": prompt,
-                        "stream": True,
-                        "options": {
-                            "temperature": 0.7,
-                            "top_p": 0.9,
-                            "repeat_penalty": 1.1,
-                            "num_predict": 128  # Limit response length for lower latency
-                        }
-                    }
-                )
-                response.raise_for_status()
-                
-                # Stream tokens as they arrive
-                async for line in response.aiter_lines():
-                    if line:
-                        chunk = json.loads(line)
-                        if chunk.get("response"):
-                            yield chunk["response"]
-                        if chunk.get("done"):
-                            break
-                            
+            # Use native ollama streaming for best performance
+            client = ollama.AsyncClient(host=self.ollama_url)
+            stream = await client.generate(
+                model=os.getenv("LLM_MODEL", "gemma3n:latest"),
+                prompt=prompt,
+                stream=True,
+                options={
+                    "num_predict": 64,      # Very short responses for low latency
+                    "temperature": 0.3,     # Lower temperature for faster generation
+                    "top_p": 0.8,
+                    "num_ctx": 1024,        # Minimal context for speed
+                }
+            )
+            
+            async for chunk in stream:
+                if chunk.get('response'):
+                    yield chunk['response']
+                if chunk.get('done'):
+                    break
+                    
         except Exception as e:
             logger.error(f"LLM streaming error: {e}")
             yield ""
 
-    async def llm_sentence_worker(self, text: str, context: str, sentence_queue: asyncio.Queue):
-        """Worker that streams LLM tokens and detects sentence boundaries"""
+    def stream_direct(self, text: str):
+        """Direct streaming without async overhead - maximum speed"""
         try:
-            text_buffer = ""
-            sentence_count = 0
+            import requests
             
-            async for token in self.stream_llm_tokens(text, context):
-                if not token:
-                    continue
-                    
-                text_buffer += token
-                
-                # Check for sentence boundary
-                sentence, remaining = self.streaming_detector.find_sentence_boundary(text_buffer)
-                
-                if sentence:
-                    sentence_count += 1
-                    logger.info(f"LLM Worker: Found sentence {sentence_count}: {sentence[:50]}...")
-                    
-                    # Queue the sentence for TTS processing
-                    await sentence_queue.put({
-                        "sequence": sentence_count,
-                        "text": sentence,
-                        "type": "sentence"
-                    })
-                    
-                    # Update buffer with remaining text
-                    text_buffer = remaining
+            logger.info(f"Direct stream: Calling {self.ollama_url}/api/generate")
             
-            # Handle any remaining text as final sentence
-            if text_buffer.strip():
-                sentence_count += 1
-                logger.info(f"LLM Worker: Final sentence {sentence_count}: {text_buffer[:50]}...")
-                await sentence_queue.put({
-                    "sequence": sentence_count,
-                    "text": text_buffer.strip(),
-                    "type": "final"
-                })
+            # Very aggressive settings for speed
+            response = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json={
+                    "model": os.getenv("LLM_MODEL", "gemma3n:latest"),  # Use configured model
+                    "prompt": f"Answer briefly: {text}",
+                    "stream": True,  # Enable streaming for ultra-low latency
+                    "options": {
+                        "num_predict": 8,       # Even shorter responses
+                        "temperature": 0.1,     # Deterministic
+                        "num_ctx": 128,         # Minimal context
+                        "top_p": 0.9,
+                        "stop": ["\n\n"]        # Stop early
+                    }
+                },
+                timeout=10  # 10 second timeout
+            )
             
-            # Signal completion
-            await sentence_queue.put({"type": "done"})
+            logger.info(f"Ollama response status: {response.status_code}")
+            
+            # Handle streaming response
+            full_text = ""
+            for line in response.iter_lines():
+                if line:
+                    chunk = json.loads(line)
+                    if chunk.get('response'):
+                        full_text += chunk['response']
+                    if chunk.get('done'):
+                        break
+            
+            if not full_text:
+                full_text = 'No response'
+            
+            logger.info(f"Generated text: {full_text[:50]}...")
+            
+            # Direct TTS call for maximum speed
+            logger.info(f"Direct TTS: Calling {self.tts_url}/v1/audio/speech")
+            
+            tts_response = requests.post(
+                f"{self.tts_url}/v1/audio/speech",
+                json={
+                    "model": "kokoro",
+                    "input": full_text,
+                    "voice": "af_bella",
+                    "response_format": "wav",
+                    "stream": False,
+                    "speed": 1.5  # Faster speech
+                },
+                timeout=5
+            )
+            
+            if tts_response.status_code == 200:
+                logger.info(f"TTS response: {len(tts_response.content)} bytes")
+                return full_text, tts_response.content
+            else:
+                logger.error(f"TTS failed: {tts_response.status_code}")
+                return full_text, b""
             
         except Exception as e:
-            logger.error(f"LLM sentence worker error: {e}")
-            await sentence_queue.put({"type": "error", "message": str(e)})
+            logger.error(f"Direct stream error: {e}")
+            return f"Error: {str(e)}", b""
 
     async def tts_processing_worker(self, sentence_queue: asyncio.Queue, audio_queue: asyncio.Queue):
         """Worker that processes sentences through TTS streaming"""
@@ -464,6 +487,33 @@ async def health():
         "timestamp": time.time()
     })
 
+@app.post("/warmup")
+async def warmup():
+    """Warm up the Ollama model for faster subsequent responses"""
+    try:
+        start_time = time.time()
+        
+        # Quick warm-up generation
+        client = ollama.AsyncClient(host=orchestrator.ollama_url)
+        await client.generate(
+            model=os.getenv("LLM_MODEL", "gemma3n:latest"),
+            prompt="Hi",
+            options={"num_predict": 1}
+        )
+        
+        warmup_time = (time.time() - start_time) * 1000
+        logger.info(f"Model warmed up in {warmup_time:.2f}ms")
+        
+        return {
+            "status": "warmed_up",
+            "warmup_time_ms": warmup_time,
+            "model": os.getenv("LLM_MODEL", "gemma3n:latest")
+        }
+        
+    except Exception as e:
+        logger.error(f"Warmup error: {e}")
+        return {"error": str(e)}, 500
+
 @app.get("/whisper-info")
 async def whisper_info():
     """Get WhisperLive connection info"""
@@ -523,7 +573,7 @@ async def process_transcript(request: TranscriptRequest):
         
         return {
             "response_text": response,
-            "audio_data": audio_response.hex() if audio_response else None,
+            "audio_data": base64.b64encode(audio_response).decode() if audio_response else None,
             "latency_ms": total_time,
             "sentence_complete": True
         }
@@ -609,6 +659,31 @@ async def process_transcript_stream(request: TranscriptRequest):
         logger.error(f"Streaming pipeline error: {e}")
         return {"error": str(e)}, 500
 
+@app.post("/ultra-fast")
+async def ultra_fast(request: TranscriptRequest):
+    """Ultra-fast direct pipeline - sub-second target"""
+    try:
+        start_time = time.time()
+        
+        logger.info(f"Ultra-Fast: {request.transcript}")
+        
+        # Direct synchronous call
+        text_response, audio_data = orchestrator.stream_direct(request.transcript)
+        
+        total_time = (time.time() - start_time) * 1000
+        logger.info(f"Ultra-Fast: Total = {total_time:.2f}ms")
+        
+        return {
+            "response_text": text_response,
+            "audio_data": base64.b64encode(audio_data).decode() if audio_data else None,
+            "latency_ms": total_time,
+            "method": "direct_sync"
+        }
+        
+    except Exception as e:
+        logger.error(f"Ultra-fast error: {e}")
+        return {"error": str(e)}, 500
+
 @app.post("/process-transcript-pipeline")
 async def process_transcript_pipeline(request: TranscriptRequest):
     """Ultra-low latency pipeline: LLM streaming + sentence-based TTS with overlapping processing"""
@@ -649,95 +724,24 @@ async def process_transcript_pipeline(request: TranscriptRequest):
         async def ultra_low_latency_stream():
             """Coordinate LLM streaming + sentence-based TTS processing"""
             try:
-                # Create queues for worker communication
-                sentence_queue = asyncio.Queue()
-                audio_queue = asyncio.Queue()
+                # Use direct stream method for maximum speed
+                start_time = time.time()
+                text_response, audio_data = orchestrator.stream_direct(cleaned_sentence)
                 
-                # Start all workers concurrently
-                workers = [
-                    asyncio.create_task(orchestrator.llm_sentence_worker(cleaned_sentence, context, sentence_queue)),
-                    asyncio.create_task(orchestrator.tts_processing_worker(sentence_queue, audio_queue)),
-                ]
+                # Stream response as JSON events
+                yield f"data: {json.dumps({'type': 'text', 'text': text_response})}\\n\\n"
                 
-                # Stream responses as they become available
-                first_response_time = None
-                async for response_item in orchestrator.audio_response_worker(audio_queue, request.session_id):
-                    
-                    if first_response_time is None:
-                        first_response_time = time.time()
-                        ttfr = (first_response_time - start_time) * 1000  # Time to first response
-                        logger.info(f"Ultra-Low Latency Pipeline: TTFR = {ttfr:.2f}ms")
-                    
-                    if response_item["type"] == "text":
-                        # Send text response immediately
-                        data = {
-                            'type': 'text',
-                            'sequence': response_item['sequence'],
-                            'text': response_item['text'],
-                            'complete_text': response_item['complete_text']
-                        }
-                        yield f"data: {json.dumps(data)}\n\n"
-                        
-                    elif response_item["type"] == "audio":
-                        # Send audio chunk
-                        import base64
-                        chunk_b64 = base64.b64encode(response_item["audio_chunk"]).decode()
-                        data = {
-                            'type': 'audio',
-                            'sequence': response_item['sequence'],
-                            'data': chunk_b64
-                        }
-                        yield f"data: {json.dumps(data)}\n\n"
-                        
-                    elif response_item["type"] == "complete":
-                        # Pipeline completed
-                        total_time = (time.time() - start_time) * 1000
-                        logger.info(f"Ultra-Low Latency Pipeline: Total time = {total_time:.2f}ms")
-                        
-                        # Store interaction if memory enabled
-                        if orchestrator.memory_enabled:
-                            try:
-                                await orchestrator.store_interaction(
-                                    cleaned_sentence, 
-                                    response_item["complete_text"], 
-                                    request.session_id
-                                )
-                            except Exception as e:
-                                logger.warning(f"Memory storage failed: {e}")
-                        
-                        data = {
-                            'type': 'complete',
-                            'complete_text': response_item['complete_text'],
-                            'latency_ms': total_time,
-                            'ttfr_ms': (first_response_time - start_time) * 1000 if first_response_time else 0
-                        }
-                        yield f"data: {json.dumps(data)}\n\n"
-                        break
-                        
-                    elif response_item["type"] == "error":
-                        # Error in pipeline - fallback to existing endpoint
-                        logger.error(f"Pipeline error: {response_item['message']}, falling back to sequential processing")
-                        data = {
-                            'type': 'fallback',
-                            'message': 'Pipeline error, falling back to sequential processing'
-                        }
-                        yield f"data: {json.dumps(data)}\n\n"
-                        break
+                if audio_data:
+                    import base64
+                    audio_b64 = base64.b64encode(audio_data).decode()
+                    yield f"data: {json.dumps({'type': 'audio', 'data': audio_b64})}\\n\\n"
                 
-                # Clean up workers
-                for worker in workers:
-                    if not worker.done():
-                        worker.cancel()
-                await asyncio.gather(*workers, return_exceptions=True)
+                total_time = (time.time() - start_time) * 1000
+                yield f"data: {json.dumps({'type': 'complete', 'latency_ms': total_time})}\\n\\n"
                 
             except Exception as e:
                 logger.error(f"Ultra-low latency stream error: {e}")
-                # Fallback error message
-                data = {
-                    'type': 'error',
-                    'message': f'Pipeline error: {str(e)}'
-                }
-                yield f"data: {json.dumps(data)}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\\n\\n"
         
         return StreamingResponse(
             ultra_low_latency_stream(),
