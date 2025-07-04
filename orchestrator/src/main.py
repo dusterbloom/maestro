@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -572,7 +573,7 @@ async def process_transcript(request: TranscriptRequest):
         
         return {
             "response_text": response,
-            "audio_data": audio_response.hex() if audio_response else None,
+            "audio_data": base64.b64encode(audio_response).decode() if audio_response else None,
             "latency_ms": total_time,
             "sentence_complete": True
         }
@@ -674,7 +675,7 @@ async def ultra_fast(request: TranscriptRequest):
         
         return {
             "response_text": text_response,
-            "audio_data": audio_data.hex() if audio_data else None,
+            "audio_data": base64.b64encode(audio_data).decode() if audio_data else None,
             "latency_ms": total_time,
             "method": "direct_sync"
         }
