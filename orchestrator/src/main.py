@@ -267,52 +267,57 @@ class VoiceOrchestrator:
             logger.error(f"LLM streaming error: {e}")
             yield ""
 
-    async def stream_llm_to_tts(self, text: str, context: str):
-        """Stream LLM tokens directly to TTS as they arrive - ultra low latency"""
+    def stream_direct(self, text: str):
+        """Direct streaming without async overhead - maximum speed"""
         try:
-            token_buffer = ""
-            word_count = 0
+            # Use ollama direct streaming
+            import requests
             
-            async for token in self.stream_llm_tokens(text, context):
-                if not token:
-                    continue
-                    
-                token_buffer += token
-                
-                # Stream every few words for maximum responsiveness
-                if " " in token or token in ".!?":
-                    word_count += token.count(" ")
-                    
-                    # Stream every 3-5 words or on punctuation
-                    if word_count >= 3 or token in ".!?":
-                        if token_buffer.strip():
-                            # Stream TTS immediately
-                            async for audio_chunk in self.synthesize_stream(token_buffer.strip()):
-                                if audio_chunk:
-                                    yield {
-                                        "type": "audio",
-                                        "data": audio_chunk,
-                                        "text": token_buffer.strip()
-                                    }
-                            
-                            token_buffer = ""
-                            word_count = 0
+            response = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json={
+                    "model": os.getenv("LLM_MODEL", "gemma3n:latest"),
+                    "prompt": f"User: {text}\nAssistant:",
+                    "stream": True,
+                    "options": {
+                        "num_predict": 32,      # Very short for sub-second
+                        "temperature": 0.1,     # Fast generation
+                        "num_ctx": 512,         # Minimal context
+                    }
+                },
+                stream=True
+            )
             
-            # Handle remaining buffer
-            if token_buffer.strip():
-                async for audio_chunk in self.synthesize_stream(token_buffer.strip()):
-                    if audio_chunk:
-                        yield {
-                            "type": "audio", 
-                            "data": audio_chunk,
-                            "text": token_buffer.strip()
-                        }
+            full_text = ""
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        chunk = json.loads(line)
+                        if chunk.get('response'):
+                            full_text += chunk['response']
+                        if chunk.get('done'):
+                            break
+                    except:
+                        continue
             
-            yield {"type": "complete"}
+            # Generate TTS directly
+            audio_data = requests.post(
+                f"{self.tts_url}/v1/audio/speech",
+                json={
+                    "model": "kokoro",
+                    "input": full_text,
+                    "voice": os.getenv("TTS_VOICE", "af_bella"),
+                    "response_format": "wav",
+                    "stream": False,
+                    "speed": 1.5
+                }
+            ).content
+            
+            return full_text, audio_data
             
         except Exception as e:
-            logger.error(f"Stream LLM to TTS error: {e}")
-            yield {"type": "error", "message": str(e)}
+            logger.error(f"Direct stream error: {e}")
+            return "Error occurred", b""
 
     async def tts_processing_worker(self, sentence_queue: asyncio.Queue, audio_queue: asyncio.Queue):
         """Worker that processes sentences through TTS streaming"""
