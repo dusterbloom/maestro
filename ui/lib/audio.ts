@@ -162,9 +162,9 @@ export class AudioRecorder {
   cleanup() {
     this.stop();
     
-    if (this.processor) {
-      this.processor.disconnect();
-      this.processor = null;
+    if (this.workletNode) {
+      this.workletNode.disconnect();
+      this.workletNode = null;
     }
     
     if (this.mediaStreamSource) {
