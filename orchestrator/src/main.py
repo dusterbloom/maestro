@@ -280,7 +280,7 @@ class VoiceOrchestrator:
                 json={
                     "model": os.getenv("LLM_MODEL", "gemma3n:latest"),  # Use configured model
                     "prompt": f"Answer briefly: {text}",
-                    "stream": False,  # Non-streaming for now to debug
+                    "stream": True,  # Enable streaming for ultra-low latency
                     "options": {
                         "num_predict": 8,       # Even shorter responses
                         "temperature": 0.1,     # Deterministic
@@ -293,8 +293,19 @@ class VoiceOrchestrator:
             )
             
             logger.info(f"Ollama response status: {response.status_code}")
-            result = response.json()
-            full_text = result.get('response', 'No response')
+            
+            # Handle streaming response
+            full_text = ""
+            for line in response.iter_lines():
+                if line:
+                    chunk = json.loads(line)
+                    if chunk.get('response'):
+                        full_text += chunk['response']
+                    if chunk.get('done'):
+                        break
+            
+            if not full_text:
+                full_text = 'No response'
             
             logger.info(f"Generated text: {full_text[:50]}...")
             
