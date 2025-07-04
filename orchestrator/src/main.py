@@ -726,9 +726,10 @@ async def process_transcript_pipeline(request: TranscriptRequest):
                 
                 total_time = (time.time() - start_time) * 1000
                 yield f"data: {json.dumps({'type': 'complete', 'latency_ms': total_time})}\\n\\n"
-                return
-                    
-                    if first_response_time is None:
+                
+            except Exception as e:
+                logger.error(f"Ultra-low latency stream error: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\\n\\n"
                         first_response_time = time.time()
                         ttfr = (first_response_time - start_time) * 1000  # Time to first response
                         logger.info(f"Ultra-Low Latency Pipeline: TTFR = {ttfr:.2f}ms")
