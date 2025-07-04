@@ -641,61 +641,29 @@ async def process_transcript_stream(request: TranscriptRequest):
         logger.error(f"Streaming pipeline error: {e}")
         return {"error": str(e)}, 500
 
-@app.post("/ultra-low-latency")
-async def ultra_low_latency(request: TranscriptRequest):
-    """Ultra-low latency pipeline: stream LLM tokens directly to TTS"""
+@app.post("/ultra-fast")
+async def ultra_fast(request: TranscriptRequest):
+    """Ultra-fast direct pipeline - sub-second target"""
     try:
         start_time = time.time()
         
-        # Skip sentence completion check for maximum speed
-        logger.info(f"Ultra-Low Latency: Processing: {request.transcript[:30]}...")
+        logger.info(f"Ultra-Fast: {request.transcript}")
         
-        # Retrieve context if memory enabled
-        context = ""
-        if orchestrator.memory_enabled:
-            try:
-                context = await orchestrator.retrieve_context(request.transcript, request.session_id)
-            except Exception as e:
-                logger.warning(f"Memory retrieval failed: {e}")
+        # Direct synchronous call
+        text_response, audio_data = orchestrator.stream_direct(request.transcript)
         
-        async def ultra_stream():
-            """Direct LLM-to-TTS streaming"""
-            first_audio = None
-            
-            async for chunk in orchestrator.stream_llm_to_tts(request.transcript, context):
-                if chunk["type"] == "audio":
-                    if first_audio is None:
-                        first_audio = time.time()
-                        ttfa = (first_audio - start_time) * 1000  # Time to first audio
-                        logger.info(f"Ultra-Low Latency: TTFA = {ttfa:.2f}ms")
-                    
-                    import base64
-                    chunk_b64 = base64.b64encode(chunk["data"]).decode()
-                    yield f"data: {{\"type\": \"audio\", \"data\": \"{chunk_b64}\", \"text\": \"{chunk['text']}\"}}\n\n"
-                    
-                elif chunk["type"] == "complete":
-                    total_time = (time.time() - start_time) * 1000
-                    logger.info(f"Ultra-Low Latency: Total = {total_time:.2f}ms")
-                    
-                    yield f"data: {{\"type\": \"complete\", \"latency_ms\": {total_time}, \"ttfa_ms\": {(first_audio - start_time) * 1000 if first_audio else 0}}}\n\n"
-                    break
-                    
-                elif chunk["type"] == "error":
-                    yield f"data: {{\"type\": \"error\", \"message\": \"{chunk['message']}\"}}\n\n"
-                    break
+        total_time = (time.time() - start_time) * 1000
+        logger.info(f"Ultra-Fast: Total = {total_time:.2f}ms")
         
-        return StreamingResponse(
-            ultra_stream(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-            }
-        )
+        return {
+            "response_text": text_response,
+            "audio_data": audio_data.hex() if audio_data else None,
+            "latency_ms": total_time,
+            "method": "direct_sync"
+        }
         
     except Exception as e:
-        logger.error(f"Ultra-low latency error: {e}")
+        logger.error(f"Ultra-fast error: {e}")
         return {"error": str(e)}, 500
 
 @app.post("/process-transcript-pipeline")
