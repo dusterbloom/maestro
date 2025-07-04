@@ -145,6 +145,14 @@ export class AudioRecorder {
   
   setVoiceActivityThreshold(threshold: number) {
     this.voiceActivityThreshold = threshold;
+    
+    // Send threshold update to worklet
+    if (this.workletNode) {
+      this.workletNode.port.postMessage({ 
+        type: 'setThreshold', 
+        data: { threshold } 
+      });
+    }
   }
   
   onAudioLevel(callback: (level: number) => void) {
