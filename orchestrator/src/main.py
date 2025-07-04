@@ -298,8 +298,28 @@ class VoiceOrchestrator:
             
             logger.info(f"Generated text: {full_text[:50]}...")
             
-            # Skip TTS for now to debug LLM speed
-            return full_text, b"fake_audio"
+            # Direct TTS call for maximum speed
+            logger.info(f"Direct TTS: Calling {self.tts_url}/audio/speech")
+            
+            tts_response = requests.post(
+                f"{self.tts_url}/audio/speech",
+                json={
+                    "model": "kokoro",
+                    "input": full_text,
+                    "voice": "af_bella",
+                    "response_format": "wav",
+                    "stream": False,
+                    "speed": 1.5  # Faster speech
+                },
+                timeout=5
+            )
+            
+            if tts_response.status_code == 200:
+                logger.info(f"TTS response: {len(tts_response.content)} bytes")
+                return full_text, tts_response.content
+            else:
+                logger.error(f"TTS failed: {tts_response.status_code}")
+                return full_text, b""
             
         except Exception as e:
             logger.error(f"Direct stream error: {e}")
