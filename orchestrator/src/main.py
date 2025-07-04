@@ -6,6 +6,7 @@ import time
 import re
 from typing import Optional
 import httpx
+import ollama
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
