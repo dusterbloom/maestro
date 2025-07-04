@@ -278,13 +278,13 @@ class VoiceOrchestrator:
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
                 json={
-                    "model": "llama3.2:3b",  # Use smallest fast model
+                    "model": "gemma:2b",  # Use fastest 2B model
                     "prompt": f"Answer briefly: {text}",
                     "stream": False,  # Non-streaming for now to debug
                     "options": {
-                        "num_predict": 16,      # Very short responses
+                        "num_predict": 8,       # Even shorter responses
                         "temperature": 0.1,     # Deterministic
-                        "num_ctx": 256,         # Minimal context
+                        "num_ctx": 128,         # Minimal context
                         "top_p": 0.9,
                         "stop": ["\n\n"]        # Stop early
                     }
