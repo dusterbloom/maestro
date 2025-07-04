@@ -120,7 +120,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
               const streamController = new AbortController();
               currentStreamControllerRef.current = streamController;
               
-              const response = await fetch('/api/ultra-fast', {
+              const response = await fetch('/api/process-transcript', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
