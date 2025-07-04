@@ -270,54 +270,40 @@ class VoiceOrchestrator:
     def stream_direct(self, text: str):
         """Direct streaming without async overhead - maximum speed"""
         try:
-            # Use ollama direct streaming
             import requests
             
+            logger.info(f"Direct stream: Calling {self.ollama_url}/api/generate")
+            
+            # Very aggressive settings for speed
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
                 json={
-                    "model": os.getenv("LLM_MODEL", "gemma3n:latest"),
-                    "prompt": f"User: {text}\nAssistant:",
-                    "stream": True,
+                    "model": "llama3.2:3b",  # Use smallest fast model
+                    "prompt": f"Answer briefly: {text}",
+                    "stream": False,  # Non-streaming for now to debug
                     "options": {
-                        "num_predict": 32,      # Very short for sub-second
-                        "temperature": 0.1,     # Fast generation
-                        "num_ctx": 512,         # Minimal context
+                        "num_predict": 16,      # Very short responses
+                        "temperature": 0.1,     # Deterministic
+                        "num_ctx": 256,         # Minimal context
+                        "top_p": 0.9,
+                        "stop": ["\n\n"]        # Stop early
                     }
                 },
-                stream=True
+                timeout=10  # 10 second timeout
             )
             
-            full_text = ""
-            for line in response.iter_lines():
-                if line:
-                    try:
-                        chunk = json.loads(line)
-                        if chunk.get('response'):
-                            full_text += chunk['response']
-                        if chunk.get('done'):
-                            break
-                    except:
-                        continue
+            logger.info(f"Ollama response status: {response.status_code}")
+            result = response.json()
+            full_text = result.get('response', 'No response')
             
-            # Generate TTS directly
-            audio_data = requests.post(
-                f"{self.tts_url}/v1/audio/speech",
-                json={
-                    "model": "kokoro",
-                    "input": full_text,
-                    "voice": os.getenv("TTS_VOICE", "af_bella"),
-                    "response_format": "wav",
-                    "stream": False,
-                    "speed": 1.5
-                }
-            ).content
+            logger.info(f"Generated text: {full_text[:50]}...")
             
-            return full_text, audio_data
+            # Skip TTS for now to debug LLM speed
+            return full_text, b"fake_audio"
             
         except Exception as e:
             logger.error(f"Direct stream error: {e}")
-            return "Error occurred", b""
+            return f"Error: {str(e)}", b""
 
     async def tts_processing_worker(self, sentence_queue: asyncio.Queue, audio_queue: asyncio.Queue):
         """Worker that processes sentences through TTS streaming"""
