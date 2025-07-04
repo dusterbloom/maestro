@@ -27,9 +27,9 @@ export async function POST(request: NextRequest) {
         const textData = JSON.stringify({ type: 'text', text: data.response_text });
         controller.enqueue(`data: ${textData}\n\n`);
         
-        // Send audio response if available
+        // Send audio response if available (as WAV data)
         if (data.audio_data) {
-          const audioData = JSON.stringify({ type: 'audio', data: data.audio_data });
+          const audioData = JSON.stringify({ type: 'wav_audio', data: data.audio_data });
           controller.enqueue(`data: ${audioData}\n\n`);
         }
         
