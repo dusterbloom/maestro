@@ -14,6 +14,8 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - LLM_MODEL=${LLM_MODEL:-gemma3n:latest}
       - TTS_VOICE=${TTS_VOICE:-af_bella}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - whisper-live
       - kokoro
