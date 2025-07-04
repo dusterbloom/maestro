@@ -191,7 +191,7 @@ class VoiceOrchestrator:
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{self.tts_url}/v1/audio/speech",  # Verified endpoint from source
+                    f"{self.tts_url}/audio/speech",  # Fixed endpoint - no double /v1
                     json={
                         "model": "kokoro",  # Required parameter from source
                         "input": text,
@@ -216,7 +216,7 @@ class VoiceOrchestrator:
                 # Use Kokoro FastAPI streaming with optimized parameters for ultra-low latency
                 async with client.stream(
                     "POST",
-                    f"{self.tts_url}/v1/audio/speech",  # Verified endpoint from source
+                    f"{self.tts_url}/audio/speech",  # Fixed endpoint - no double /v1
                     json={
                         "model": "kokoro",
                         "input": text,
