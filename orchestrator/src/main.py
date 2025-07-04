@@ -299,7 +299,7 @@ class VoiceOrchestrator:
             logger.info(f"Generated text: {full_text[:50]}...")
             
             # Direct TTS call for maximum speed
-            logger.info(f"Direct TTS: Calling {self.tts_url}/audio/speech")
+            logger.info(f"Direct TTS: Calling {self.tts_url}/v1/audio/speech")
             
             tts_response = requests.post(
                 f"{self.tts_url}/v1/audio/speech",
