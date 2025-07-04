@@ -302,7 +302,7 @@ class VoiceOrchestrator:
             logger.info(f"Direct TTS: Calling {self.tts_url}/audio/speech")
             
             tts_response = requests.post(
-                f"{self.tts_url}/audio/speech",
+                f"{self.tts_url}/v1/audio/speech",
                 json={
                     "model": "kokoro",
                     "input": full_text,
