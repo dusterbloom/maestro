@@ -712,9 +712,21 @@ async def process_transcript_pipeline(request: TranscriptRequest):
         async def ultra_low_latency_stream():
             """Coordinate LLM streaming + sentence-based TTS processing"""
             try:
-                # Use the new ultra-low latency method
-                first_response_time = None
-                async for response_item in orchestrator.stream_llm_to_tts(cleaned_sentence, context):
+                # Use direct stream method for maximum speed
+                start_time = time.time()
+                text_response, audio_data = orchestrator.stream_direct(cleaned_sentence)
+                
+                # Stream response as JSON events
+                yield f"data: {json.dumps({'type': 'text', 'text': text_response})}\\n\\n"
+                
+                if audio_data:
+                    import base64
+                    audio_b64 = base64.b64encode(audio_data).decode()
+                    yield f"data: {json.dumps({'type': 'audio', 'data': audio_b64})}\\n\\n"
+                
+                total_time = (time.time() - start_time) * 1000
+                yield f"data: {json.dumps({'type': 'complete', 'latency_ms': total_time})}\\n\\n"
+                return
                     
                     if first_response_time is None:
                         first_response_time = time.time()
