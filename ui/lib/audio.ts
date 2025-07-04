@@ -104,33 +104,6 @@ export class AudioRecorder {
       this.workletNode.port.postMessage({ type: 'stop' });
     }
   }
-  
-  /**
-   * Resamples audio data to 16kHz (like WhisperLive Chrome Extension)
-   */
-  private resampleTo16kHz(audioData: Float32Array, origSampleRate: number = 44100): Float32Array {
-    // Exact implementation from WhisperLive Chrome Extension
-    const targetSampleRate = 16000;
-    const targetLength = Math.round(audioData.length * (targetSampleRate / origSampleRate));
-    const resampledData = new Float32Array(targetLength);
-    
-    if (targetLength === 0) return resampledData;
-    
-    const springFactor = (audioData.length - 1) / (targetLength - 1);
-    resampledData[0] = audioData[0];
-    resampledData[targetLength - 1] = audioData[audioData.length - 1];
-    
-    for (let i = 1; i < targetLength - 1; i++) {
-      const index = i * springFactor;
-      const leftIndex = Math.floor(index);
-      const rightIndex = Math.ceil(index);
-      const fraction = index - leftIndex;
-      resampledData[i] = audioData[leftIndex] + (audioData[rightIndex] - audioData[leftIndex]) * fraction;
-    }
-    
-    return resampledData;
-  }
-  
   getAudioLevel(): number {
     return this.currentAudioLevel;
   }
