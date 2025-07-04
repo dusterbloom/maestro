@@ -267,51 +267,52 @@ class VoiceOrchestrator:
             logger.error(f"LLM streaming error: {e}")
             yield ""
 
-    async def llm_sentence_worker(self, text: str, context: str, sentence_queue: asyncio.Queue):
-        """Worker that streams LLM tokens and detects sentence boundaries"""
+    async def stream_llm_to_tts(self, text: str, context: str):
+        """Stream LLM tokens directly to TTS as they arrive - ultra low latency"""
         try:
-            text_buffer = ""
-            sentence_count = 0
+            token_buffer = ""
+            word_count = 0
             
             async for token in self.stream_llm_tokens(text, context):
                 if not token:
                     continue
                     
-                text_buffer += token
+                token_buffer += token
                 
-                # Check for sentence boundary
-                sentence, remaining = self.streaming_detector.find_sentence_boundary(text_buffer)
-                
-                if sentence:
-                    sentence_count += 1
-                    logger.info(f"LLM Worker: Found sentence {sentence_count}: {sentence[:50]}...")
+                # Stream every few words for maximum responsiveness
+                if " " in token or token in ".!?":
+                    word_count += token.count(" ")
                     
-                    # Queue the sentence for TTS processing
-                    await sentence_queue.put({
-                        "sequence": sentence_count,
-                        "text": sentence,
-                        "type": "sentence"
-                    })
-                    
-                    # Update buffer with remaining text
-                    text_buffer = remaining
+                    # Stream every 3-5 words or on punctuation
+                    if word_count >= 3 or token in ".!?":
+                        if token_buffer.strip():
+                            # Stream TTS immediately
+                            async for audio_chunk in self.synthesize_stream(token_buffer.strip()):
+                                if audio_chunk:
+                                    yield {
+                                        "type": "audio",
+                                        "data": audio_chunk,
+                                        "text": token_buffer.strip()
+                                    }
+                            
+                            token_buffer = ""
+                            word_count = 0
             
-            # Handle any remaining text as final sentence
-            if text_buffer.strip():
-                sentence_count += 1
-                logger.info(f"LLM Worker: Final sentence {sentence_count}: {text_buffer[:50]}...")
-                await sentence_queue.put({
-                    "sequence": sentence_count,
-                    "text": text_buffer.strip(),
-                    "type": "final"
-                })
+            # Handle remaining buffer
+            if token_buffer.strip():
+                async for audio_chunk in self.synthesize_stream(token_buffer.strip()):
+                    if audio_chunk:
+                        yield {
+                            "type": "audio", 
+                            "data": audio_chunk,
+                            "text": token_buffer.strip()
+                        }
             
-            # Signal completion
-            await sentence_queue.put({"type": "done"})
+            yield {"type": "complete"}
             
         except Exception as e:
-            logger.error(f"LLM sentence worker error: {e}")
-            await sentence_queue.put({"type": "error", "message": str(e)})
+            logger.error(f"Stream LLM to TTS error: {e}")
+            yield {"type": "error", "message": str(e)}
 
     async def tts_processing_worker(self, sentence_queue: asyncio.Queue, audio_queue: asyncio.Queue):
         """Worker that processes sentences through TTS streaming"""
