@@ -1,0 +1,6 @@
+
+services:
+  diglett:
+    image: 8igmac/diglett:latest
+    ports:
+      - "3210:80"
