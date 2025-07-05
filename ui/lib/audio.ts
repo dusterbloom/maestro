@@ -9,7 +9,7 @@ export class AudioRecorder {
   
   // Voice activity detection for barge-in
   private currentAudioLevel = 0;
-  private voiceActivityThreshold = 0.02; // Threshold for detecting speech
+  private voiceActivityThreshold = 0.1; // Threshold for detecting speech (increased from 0.02 to match professional VAD)
   private silenceDuration = 0;
   private maxSilenceMs = 1000; // 1 second of silence before stopping
   private lastVoiceActivityTime = 0;
@@ -130,6 +130,10 @@ export class AudioRecorder {
   
   onAudioLevel(callback: (level: number) => void) {
     this.onAudioLevelCallback = callback;
+  }
+  
+  getVoiceActivityThreshold(): number {
+    return this.voiceActivityThreshold;
   }
   
   cleanup() {

@@ -1,0 +1,76 @@
+{
+  "health_check": {
+    "success": true,
+    "status_code": 200,
+    "response": {
+      "status": "ok",
+      "memory_enabled": false,
+      "timestamp": 1751669308.708078
+    }
+  },
+  "interrupt_endpoint_direct": {
+    "success": true,
+    "status_code": 200,
+    "response": {
+      "status": "no_active_session",
+      "session_id": "non_existent_session",
+      "interrupt_time_ms": 0.09870529174804688,
+      "message": "No active TTS session to interrupt"
+    },
+    "expected_status": "no_active_session"
+  },
+  "session_tracking": {
+    "success": true,
+    "method": "debug_endpoint",
+    "session_exists": false,
+    "active_sessions": []
+  },
+  "create_tts_session": {
+    "success": true,
+    "status_code": 200,
+    "session_created": false,
+    "session_id": "debug_test_1751669308"
+  },
+  "interrupt_active_session": {
+    "success": true,
+    "interrupted": false,
+    "interrupt_response": {
+      "status": "no_active_session",
+      "session_id": "debug_test_1751669308",
+      "interrupt_time_ms": 0.08988380432128906,
+      "message": "No active TTS session to interrupt"
+    },
+    "session_id": "debug_test_1751669308"
+  },
+  "frontend_api_integration": {
+    "success": false,
+    "error": "HTTPConnectionPool(host='localhost', port=3000): Read timed out. (read timeout=10)"
+  },
+  "timing_performance": {
+    "success": true,
+    "avg_time_ms": 2.150392532348633,
+    "max_time_ms": 3.0345916748046875,
+    "all_times_ms": [
+      3.0345916748046875,
+      1.9083023071289062,
+      1.9924640655517578,
+      1.9536018371582031,
+      1.8630027770996094
+    ],
+    "performance_good": true
+  },
+  "summary": {
+    "total_tests": 7,
+    "passed_tests": 3,
+    "pass_rate": 0.42857142857142855,
+    "individual_results": {
+      "Health Check": true,
+      "Interrupt Endpoint Direct": true,
+      "Create TTS Session": false,
+      "Session Tracking": false,
+      "Interrupt Active Session": false,
+      "Frontend API Integration": false,
+      "Timing Performance": true
+    }
+  }
+}
