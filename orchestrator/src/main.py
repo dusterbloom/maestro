@@ -1020,27 +1020,54 @@ async def process_transcript(request: TranscriptRequest):
             }
         
         logger.info(f"Processing complete sentence: {cleaned_sentence} for speaker: {request.speaker_id}")
-        
-        # 2. Retrieve context if memory enabled
-        context = ""
+
+        # 2. Handle speaker identification and naming
+        speaker_name = None
+        if request.speaker_id:
+            speaker_name = orchestrator._get_speaker_name(request.speaker_id)
+            if speaker_name == "unknown user":
+                # If speaker is unknown, LLM will be prompted to ask for name
+                pass # LLM will handle the prompt based on system prompt
+            else:
+                # Known speaker, add to context for LLM
+                context = f"The current speaker is {speaker_name}. " + context
+
+        # 3. Retrieve context if memory enabled
         if orchestrator.memory_enabled:
             try:
                 context = await orchestrator.retrieve_context(cleaned_sentence, request.session_id)
             except Exception as e:
                 logger.warning(f"Memory retrieval failed: {e}")
-        
-        # 3. Generate response using Ollama
-        response = await orchestrator.generate_response(cleaned_sentence, context)
+
+        # 4. Generate response using Ollama
+        response = await orchestrator.generate_response(cleaned_sentence, speaker_id=request.speaker_id, context=context)
         logger.info(f"LLM Response: {response}")
-        
-        # 4. Store interaction if memory enabled
+
+        # 5. Check if LLM asked for a name and store it
+        if request.speaker_id and "what would you like me to call you" in response.lower():
+            # This is a heuristic, a more robust solution would involve function calling
+            # For now, assume the next user input will be the name
+            # This part will be handled by the frontend, which will send the name back
+            # For now, we'll just log it.
+            logger.info(f"LLM prompted for speaker name for speaker_id: {request.speaker_id}")
+        elif request.speaker_id and speaker_name == "unknown user":
+            # If the speaker was unknown and the LLM didn't ask for a name,
+            # it means the user provided it in the first turn.
+            # We need a way to extract the name from the response.
+            # This is a placeholder for now.
+            # A more robust solution would involve LLM function calling to extract the name.
+            # For now, we'll assume the user's first response after being prompted is their name.
+            # This will be handled by the frontend.
+            pass
+
+        # 6. Store interaction if memory enabled
         if orchestrator.memory_enabled:
             try:
                 await orchestrator.store_interaction(cleaned_sentence, response, request.session_id)
             except Exception as e:
                 logger.warning(f"Memory storage failed: {e}")
-        
-        # 5. Synthesize speech using Kokoro
+
+        # 7. Synthesize speech using Kokoro
         audio_response = await orchestrator.synthesize(response)
         
         total_time = (time.time() - start_time) * 1000
