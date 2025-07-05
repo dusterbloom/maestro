@@ -267,6 +267,7 @@ class VoiceOrchestrator:
         self.whisper_port = int(config.WHISPER_URL.split(":")[-1])
         self.ollama_url = config.OLLAMA_URL
         self.tts_url = config.TTS_URL
+        self.diglett_url = config.DIGLETT_URL
         self.memory_enabled = config.MEMORY_ENABLED
         self.amem_url = config.AMEM_URL
         
