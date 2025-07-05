@@ -1,0 +1,53 @@
+{
+  "mcpServers": {
+    "browser": {
+      "command": "npx",
+      "args": [
+        "@browsermcp/mcp@latest"
+      ],
+      "description": "A tool for interacting with a web browser."
+    },
+    "vscode": {
+      "command": "npx",
+      "args": [
+        "vscode-as-mcp-server"
+      ],
+      "description": "A tool for interacting with VS Code."
+    },
+  "vibe-git": {
+      "command": "uvx",
+      "args": [
+        "--from", 
+        "git+https://github.com/software-is-art/vibe-git.git",
+        "vibe-git-mcp"
+      ],
+      "cwd": "/mnt/c/Users/PC/Dev/oneshots/maestro"
+    },
+    "docker_proxy": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-l",
+        "mcp.client=gemini-cli",
+        "--rm",
+        "-i",
+        "alpine/socat",
+        "STDIO",
+        "TCP:host.docker.internal:8811"
+      ],
+      "description": "Docker-based proxy tool."
+    },
+    "code_graph": {
+       "command": "npx",
+       "args": [ "-y" , "mcp-code-graph@latest", 
+        "dusterbloom/maestro",
+        "collabora/WhisperLive",
+        "ollama/ollama",
+        "FastAPI/FastAPI",
+        "remsky/Kokoro-FastAPI",
+        "koljab/RealtimeVoiceChat"
+       ],
+       "description": "Analyzes codebases and their dependencies."
+    }
+  }
+}
