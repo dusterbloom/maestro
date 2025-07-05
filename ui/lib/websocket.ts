@@ -14,6 +14,7 @@ export class VoiceWebSocket {
   private onSentenceCallback?: (sentence: string) => void;
   private onErrorCallback?: (error: string) => void;
   private onDisconnectCallback?: () => void;
+  private onInterruptionAckCallback?: (success: boolean, message: string) => void;
   
   constructor(private url: string) {}
   
@@ -81,8 +82,9 @@ export class VoiceWebSocket {
                 }
               });
               
-              // Still show all transcripts for user feedback
-              const transcript = message.segments.map((seg: any) => seg.text || '').join(' ');
+              // Only show current/incomplete segments in transcript (not old completed ones)
+              const incompleteSegments = message.segments.filter((seg: any) => !seg.completed);
+              const transcript = incompleteSegments.map((seg: any) => seg.text || '').join(' ');
               if (transcript.trim()) {
                 this.onTranscriptCallback?.(transcript);
               }
@@ -137,6 +139,51 @@ export class VoiceWebSocket {
     }
   }
   
+  async sendInterruptTts(sessionId: string): Promise<{ success: boolean; message: string }> {
+    /**
+     * Send TTS interruption request to orchestrator backend
+     * This is sent via HTTP API rather than WebSocket for reliability
+     */
+    try {
+      console.log(`🛑 Sending TTS interruption request for session ${sessionId}`);
+      
+      const response = await fetch('/api/interrupt-tts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          session_id: sessionId
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      
+      const result = await response.json();
+      
+      console.log(`✅ TTS interruption response:`, result);
+      
+      const success = result.status === 'interrupted';
+      const message = result.message || 'TTS interruption completed';
+      
+      // Notify via callback if set
+      this.onInterruptionAckCallback?.(success, message);
+      
+      return { success, message };
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`❌ TTS interruption failed:`, errorMessage);
+      
+      // Notify error via callback
+      this.onInterruptionAckCallback?.(false, errorMessage);
+      
+      return { success: false, message: errorMessage };
+    }
+  }
+  
 
   disconnect() {
     if (this.reconnectTimer) {
@@ -176,5 +223,9 @@ export class VoiceWebSocket {
   
   onDisconnect(callback: () => void) {
     this.onDisconnectCallback = callback;
+  }
+  
+  onInterruptionAck(callback: (success: boolean, message: string) => void) {
+    this.onInterruptionAckCallback = callback;
   }
 }
