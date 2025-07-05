@@ -1111,27 +1111,41 @@ async def process_transcript_stream(request: TranscriptRequest):
             )
         
         logger.info(f"Processing complete sentence: {cleaned_sentence}")
-        
-        # 2. Retrieve context if memory enabled
-        context = ""
+
+        # 2. Handle speaker identification and naming
+        speaker_name = None
+        if request.speaker_id:
+            speaker_name = orchestrator._get_speaker_name(request.speaker_id)
+            if speaker_name == "unknown user":
+                pass # LLM will handle the prompt based on system prompt
+            else:
+                context = f"The current speaker is {speaker_name}. " + context
+
+        # 3. Retrieve context if memory enabled
         if orchestrator.memory_enabled:
             try:
                 context = await orchestrator.retrieve_context(cleaned_sentence, request.session_id)
             except Exception as e:
                 logger.warning(f"Memory retrieval failed: {e}")
-        
-        # 3. Generate response using Ollama
-        response = await orchestrator.generate_response(cleaned_sentence, context)
+
+        # 4. Generate response using Ollama
+        response = await orchestrator.generate_response(cleaned_sentence, speaker_id=request.speaker_id, context=context)
         logger.info(f"LLM Response: {response}")
-        
-        # 4. Store interaction if memory enabled
+
+        # 5. Check if LLM asked for a name and store it
+        if request.speaker_id and "what would you like me to call you" in response.lower():
+            logger.info(f"LLM prompted for speaker name for speaker_id: {request.speaker_id}")
+        elif request.speaker_id and speaker_name == "unknown user":
+            pass
+
+        # 6. Store interaction if memory enabled
         if orchestrator.memory_enabled:
             try:
                 await orchestrator.store_interaction(cleaned_sentence, response, request.session_id)
             except Exception as e:
                 logger.warning(f"Memory storage failed: {e}")
-        
-        # 5. Stream TTS response
+
+        # 7. Stream TTS response
         async def generate_audio_stream():
             """Generate streaming audio response"""
             yield f"data: {json.dumps({'type': 'text', 'data': response})}\n\n"
