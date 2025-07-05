@@ -932,6 +932,9 @@ class TranscriptRequest(BaseModel):
     transcript: str
     session_id: str = "default"
 
+class SpeakerEmbeddingRequest(BaseModel):
+    audio_data: str  # base64 encoded audio
+
 class InterruptRequest(BaseModel):
     session_id: str
 
