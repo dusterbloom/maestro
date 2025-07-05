@@ -971,7 +971,7 @@ async def process_transcript(request: TranscriptRequest):
                 "sentence_complete": False
             }
         
-        logger.info(f"Processing complete sentence: {cleaned_sentence}")
+        logger.info(f"Processing complete sentence: {cleaned_sentence} for speaker: {request.speaker_id}")
         
         # 2. Retrieve context if memory enabled
         context = ""
