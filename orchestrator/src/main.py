@@ -290,13 +290,8 @@ class VoiceOrchestrator:
         # Track active TTS sessions for interruption capability
         self.active_tts_sessions = {}  # session_id -> {"thread": Thread, "queue": Queue, "abort_flag": Event}
         
-    async def generate_response(self, text: str, speaker_id: Optional[str] = None, context: str = "") -> str:
+    async def generate_response(self, text: str, context: str = "") -> str:
         """Generate response using Ollama with streaming"""
-        speaker_name = self._get_speaker_name(speaker_id) if speaker_id else "unknown user"
-
-        # Construct the full prompt including system prompt and speaker name
-        full_prompt = f"{self.system_prompt}\n\nCurrent Speaker: {speaker_name}\n\nUser: {text}\nAssistant:"""
-        
         prompt = f"{context}\n\nUser: {text}\nAssistant:" if context else f"User: {text}\nAssistant:"
         
         try:
