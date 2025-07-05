@@ -16,6 +16,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
   const [isPlaying, setIsPlaying] = useState(false);
   const [speakerId, setSpeakerId] = useState<string | null>(null);
   const [isWaitingForName, setIsWaitingForName] = useState(false);
+  const [promptForEmbedding, setPromptForEmbedding] = useState(false);
   
   const whisperWsRef = useRef<VoiceWebSocket | null>(null);
   const recorderRef = useRef<AudioRecorder | null>(null);
