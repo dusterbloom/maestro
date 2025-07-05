@@ -931,6 +931,7 @@ async def whisper_info():
 class TranscriptRequest(BaseModel):
     transcript: str
     session_id: str = "default"
+    speaker_id: Optional[str] = None
 
 class SpeakerEmbeddingRequest(BaseModel):
     audio_data: str  # base64 encoded audio
