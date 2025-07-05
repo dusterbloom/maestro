@@ -938,6 +938,20 @@ class SpeakerEmbeddingRequest(BaseModel):
 class InterruptRequest(BaseModel):
     session_id: str
 
+@app.post("/embed-speaker")
+async def embed_speaker(request: SpeakerEmbeddingRequest):
+    """Embed speaker from audio data"""
+    try:
+        audio_data = base64.b64decode(request.audio_data)
+        speaker_id = await orchestrator.embed_speaker(audio_data)
+        if speaker_id:
+            return {"speaker_id": speaker_id}
+        else:
+            return {"error": "Failed to embed speaker"}, 500
+    except Exception as e:
+        logger.error(f"Speaker embedding request error: {e}")
+        return {"error": str(e)}, 500
+
 @app.post("/process-transcript")
 async def process_transcript(request: TranscriptRequest):
     """Process transcript through LLM and TTS pipeline with sentence completion detection"""
