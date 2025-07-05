@@ -9,6 +9,7 @@ from typing import Optional
 import httpx
 import ollama
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from config import config
@@ -18,6 +19,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Voice Orchestrator", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 class SentenceCompletionDetector:
     """Lightweight sentence completion detection using pattern analysis"""
@@ -883,7 +892,7 @@ class VoiceOrchestrator:
             async with httpx.AsyncClient(timeout=config.OLLAMA_TIMEOUT) as client:
                 response = await client.post(
                     f"{self.diglett_url}/embed",
-                    files={"audio_file": audio_data}
+                    files={"file": audio_data}
                 )
                 response.raise_for_status()
                 return response.json().get("speaker_id")
@@ -1026,14 +1035,25 @@ async def process_transcript(request: TranscriptRequest):
 
         # 2. Handle speaker identification and naming
         speaker_name = None
+        context = ""
         if request.speaker_id:
             speaker_name = orchestrator._get_speaker_name(request.speaker_id)
             if speaker_name == "unknown user":
-                # If speaker is unknown, LLM will be prompted to ask for name
-                pass # LLM will handle the prompt based on system prompt
+                # If speaker is unknown, ask for their name and return immediately
+                response_text = "Hello! I don't seem to have your name on file. What would you like me to call you?"
+                audio_response = await orchestrator.synthesize(response_text)
+                total_time = (time.time() - start_time) * 1000
+                logger.info(f"Prompting for name from unknown speaker_id: {request.speaker_id}")
+                return {
+                    "response_text": response_text,
+                    "audio_data": base64.b64encode(audio_response).decode() if audio_response else None,
+                    "latency_ms": total_time,
+                    "sentence_complete": True,
+                    "prompt_for_name": True,
+                }
             else:
                 # Known speaker, add to context for LLM
-                context = f"The current speaker is {speaker_name}. " + context
+                context = f"The current speaker is {speaker_name}. "
 
         # 3. Retrieve context if memory enabled
         if orchestrator.memory_enabled:

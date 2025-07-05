@@ -474,8 +474,9 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
           reader.readAsDataURL(audioBlob);
           reader.onloadend = async () => {
             const base64Audio = (reader.result as string).split(',')[1];
+            const orchestratorBaseUrl = process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || 'http://localhost:8000';
             try {
-              const response = await fetch('/embed-speaker', {
+              const response = await fetch(`${orchestratorBaseUrl}/embed-speaker`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ audio_data: base64Audio }),
