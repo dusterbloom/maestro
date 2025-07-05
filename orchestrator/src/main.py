@@ -888,6 +888,18 @@ class VoiceOrchestrator:
             logger.error(f"Speaker embedding error: {e}")
             return None
 
+    def _load_system_prompt(self, file_path: str) -> str:
+        """Loads the system prompt from a Markdown file."""
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
+            logger.error(f"System prompt file not found: {file_path}")
+            return "You are a helpful assistant."
+        except Exception as e:
+            logger.error(f"Error loading system prompt from {file_path}: {e}")
+            return "You are a helpful assistant."
+
 # Initialize orchestrator
 orchestrator = VoiceOrchestrator()
 
