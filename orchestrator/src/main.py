@@ -900,6 +900,32 @@ class VoiceOrchestrator:
             logger.error(f"Error loading system prompt from {file_path}: {e}")
             return "You are a helpful assistant."
 
+    def _get_speaker_name(self, speaker_id: str) -> str:
+        """Retrieves the speaker name for a given speaker ID."""
+        return self.speaker_names.get(speaker_id, "unknown user")
+
+    def _set_speaker_name(self, speaker_id: str, name: str):
+        """Sets the speaker name for a given speaker ID."""
+        self.speaker_names[speaker_id] = name
+
+    def _generate_anon_name(self) -> str:
+        """Generates a unique anonymous name."""
+        name = f"anon_{self.next_anon_id}"
+        self.next_anon_id += 1
+        return name
+
+    def _load_system_prompt(self, file_path: str) -> str:
+        """Loads the system prompt from a Markdown file."""
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
+            logger.error(f"System prompt file not found: {file_path}")
+            return "You are a helpful assistant."
+        except Exception as e:
+            logger.error(f"Error loading system prompt from {file_path}: {e}")
+            return "You are a helpful assistant."
+
 # Initialize orchestrator
 orchestrator = VoiceOrchestrator()
 
