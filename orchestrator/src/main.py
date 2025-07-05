@@ -975,6 +975,21 @@ class SpeakerEmbeddingRequest(BaseModel):
 class InterruptRequest(BaseModel):
     session_id: str
 
+class SetSpeakerNameRequest(BaseModel):
+    speaker_id: str
+    name: str
+
+@app.post("/set-speaker-name")
+async def set_speaker_name(request: SetSpeakerNameRequest):
+    """Set the speaker name for a given speaker ID"""
+    try:
+        orchestrator._set_speaker_name(request.speaker_id, request.name)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Failed to set speaker name: {e}")
+        return {"error": str(e)}, 500
+
+
 @app.post("/embed-speaker")
 async def embed_speaker(request: SpeakerEmbeddingRequest):
     """Embed speaker from audio data"""
