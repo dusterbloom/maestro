@@ -24,7 +24,7 @@ class LatencyMeasurement:
     error: Optional[str] = None
 
 class VoiceLatencyTester:
-    def __init__(self, ws_url: str = "ws://localhost:8000/ws"):
+    def __init__(self, ws_url: str = os.getenv("WHISPER_WS_URL", "ws://localhost:8000/ws")):
         self.ws_url = ws_url
         self.results: List[LatencyMeasurement] = []
         

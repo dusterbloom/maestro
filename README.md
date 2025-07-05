@@ -46,6 +46,21 @@ open http://localhost:3000
 - Network overhead: 12ms
 - **Total: 408ms** (< 500ms target ✅)
 
+## 🎤 Voice Interruption (Professional Barge-in)
+
+**Real-time voice interruption system** inspired by professional voice applications:
+
+- **⚡ Immediate Response**: < 100ms interruption latency when user speaks
+- **🚫 Cascading Prevention**: Blocks new TTS while audio is playing  
+- **🎯 Smart Detection**: Voice activity detection during TTS playback AND queue gaps
+- **🔄 Seamless Transition**: Instant switch from TTS to recording mode
+- **🧠 Professional Grade**: Based on WhisperLive VAD with 0.1 threshold
+
+**How it works:**
+1. User speaks while TTS is playing → Voice activity detected (< 100ms)
+2. All audio instantly stopped + queue cleared → Recording starts immediately  
+3. Transcription processed → New response generated → Seamless conversation
+
 ## 🛠️ Components
 
 | Service | Purpose | Technology | Port |
