@@ -8,6 +8,7 @@ import re
 from typing import Optional
 import httpx
 import ollama
+import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -270,6 +271,88 @@ class StreamingSentenceDetector:
             
         return sentence, remaining
 
+class DiglettWebSocketClient:
+    """WebSocket client for real-time speaker verification with Diglett"""
+    
+    def __init__(self, diglett_url: str):
+        self.diglett_url = diglett_url
+        self.websocket = None
+        self.is_connected = False
+        
+    async def connect(self):
+        """Connect to Diglett WebSocket stream"""
+        try:
+            # Convert HTTP URL to WebSocket URL
+            ws_url = self.diglett_url.replace("http://", "ws://").replace("https://", "wss://")
+            ws_url = f"{ws_url}/stream"
+            
+            self.websocket = await websockets.connect(ws_url)
+            self.is_connected = True
+            logger.info(f"Connected to Diglett WebSocket: {ws_url}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to connect to Diglett WebSocket: {e}")
+            self.is_connected = False
+            return False
+    
+    async def disconnect(self):
+        """Disconnect from Diglett WebSocket"""
+        if self.websocket and self.is_connected:
+            await self.websocket.close()
+            self.is_connected = False
+            logger.info("Disconnected from Diglett WebSocket")
+    
+    async def verify_speaker(self, audio_data_b64: str, known_embeddings: list) -> Optional[dict]:
+        """
+        Send audio for real-time speaker verification
+        
+        Args:
+            audio_data_b64: Base64 encoded audio data
+            known_embeddings: List of known speaker embeddings for comparison
+            
+        Returns:
+            {speaker: embedding_array, db: float} or None
+        """
+        if not self.is_connected or not self.websocket:
+            logger.warning("Diglett WebSocket not connected")
+            return None
+            
+        try:
+            # Prepare message according to Diglett API
+            message = {
+                "audio_data": audio_data_b64,
+                "speaker_embedding": known_embeddings,
+                "terminate_session": False
+            }
+            
+            # Send message
+            await self.websocket.send(json.dumps(message))
+            
+            # Wait for response
+            response = await self.websocket.recv()
+            result = json.loads(response)
+            
+            # Diglett returns: {speaker: embedding_array, db: float}
+            return result
+            
+        except Exception as e:
+            logger.error(f"Speaker verification error: {e}")
+            return None
+    
+    async def terminate_session(self):
+        """Send termination signal to Diglett"""
+        if self.is_connected and self.websocket:
+            try:
+                termination_message = {
+                    "audio_data": "",
+                    "speaker_embedding": [],
+                    "terminate_session": True
+                }
+                await self.websocket.send(json.dumps(termination_message))
+                logger.info("Sent session termination to Diglett")
+            except Exception as e:
+                logger.error(f"Failed to terminate Diglett session: {e}")
+
 class VoiceOrchestrator:
     def __init__(self):
         self.whisper_host = config.WHISPER_URL.split("://")[1].split(":")[0]
@@ -280,9 +363,10 @@ class VoiceOrchestrator:
         self.memory_enabled = config.MEMORY_ENABLED
         self.amem_url = config.AMEM_URL
 
-        # Speaker ID to Name mapping (in-memory for now)
-        self.speaker_names = {}
-        self.next_anon_id = 1
+        # Speaker data storage (in-memory for now)
+        # Format: {speaker_id: {name: str, embedding: List[float], avg_db: float}}
+        self.speakers = {}
+        self.next_speaker_id = 1
 
         # Load system prompt
         self.system_prompt = self._load_system_prompt(config.SYSTEM_PROMPT_FILE)
@@ -298,6 +382,9 @@ class VoiceOrchestrator:
         
         # Track active TTS sessions for interruption capability
         self.active_tts_sessions = {}  # session_id -> {"thread": Thread, "queue": Queue, "abort_flag": Event}
+        
+        # Initialize Diglett WebSocket client for real-time speaker verification
+        self.diglett_ws = DiglettWebSocketClient(self.diglett_url)
         
     async def generate_response(self, text: str, speaker_id: Optional[str] = None, context: str = "") -> str:
         """Generate response using Ollama with streaming"""
@@ -886,8 +973,8 @@ class VoiceOrchestrator:
         except Exception as e:
             logger.error(f"Error cleaning up session {session_id}: {e}")
 
-    async def embed_speaker(self, audio_data: bytes) -> Optional[str]:
-        """Embed speaker using Diglett"""
+    async def embed_speaker(self, audio_data: bytes) -> Optional[dict]:
+        """Embed speaker using Diglett - returns speaker data with ID"""
         try:
             async with httpx.AsyncClient(timeout=config.OLLAMA_TIMEOUT) as client:
                 response = await client.post(
@@ -895,7 +982,32 @@ class VoiceOrchestrator:
                     files={"file": audio_data}
                 )
                 response.raise_for_status()
-                return response.json().get("speaker_id")
+                diglett_response = response.json()
+                
+                # Diglett returns: {speaker_name, speaker_embedding, avg_db}
+                speaker_name = diglett_response.get("speaker_name", "")
+                speaker_embedding = diglett_response.get("speaker_embedding", [])
+                avg_db = diglett_response.get("avg_db", 0.0)
+                
+                # Generate our own speaker ID and store the data
+                speaker_id = f"speaker_{self.next_speaker_id}"
+                self.next_speaker_id += 1
+                
+                # Store speaker data
+                self.speakers[speaker_id] = {
+                    "name": speaker_name or f"Speaker {self.next_speaker_id - 1}",
+                    "embedding": speaker_embedding,
+                    "avg_db": avg_db
+                }
+                
+                logger.info(f"Stored speaker {speaker_id}: name='{self.speakers[speaker_id]['name']}', embedding_dim={len(speaker_embedding)}, avg_db={avg_db}")
+                
+                return {
+                    "speaker_id": speaker_id,
+                    "speaker_name": self.speakers[speaker_id]["name"],
+                    "embedding_dim": len(speaker_embedding)
+                }
+                
         except Exception as e:
             logger.error(f"Speaker embedding error: {e}")
             return None
@@ -914,17 +1026,97 @@ class VoiceOrchestrator:
 
     def _get_speaker_name(self, speaker_id: str) -> str:
         """Retrieves the speaker name for a given speaker ID."""
-        return self.speaker_names.get(speaker_id, "unknown user")
+        speaker_data = self.speakers.get(speaker_id)
+        return speaker_data["name"] if speaker_data else "unknown user"
 
     def _set_speaker_name(self, speaker_id: str, name: str):
         """Sets the speaker name for a given speaker ID."""
-        self.speaker_names[speaker_id] = name
+        if speaker_id in self.speakers:
+            self.speakers[speaker_id]["name"] = name
+        else:
+            logger.warning(f"Attempted to set name for unknown speaker ID: {speaker_id}")
 
-    def _generate_anon_name(self) -> str:
-        """Generates a unique anonymous name."""
-        name = f"anon_{self.next_anon_id}"
-        self.next_anon_id += 1
-        return name
+    def _get_speaker_embedding(self, speaker_id: str) -> Optional[list]:
+        """Retrieves the speaker embedding for a given speaker ID."""
+        speaker_data = self.speakers.get(speaker_id)
+        return speaker_data["embedding"] if speaker_data else None
+
+    def _get_speaker_data(self, speaker_id: str) -> Optional[dict]:
+        """Retrieves all speaker data for a given speaker ID."""
+        return self.speakers.get(speaker_id)
+    
+    async def initialize_diglett_connection(self):
+        """Initialize connection to Diglett WebSocket for real-time speaker verification"""
+        try:
+            connected = await self.diglett_ws.connect()
+            if connected:
+                logger.info("Diglett WebSocket connection established")
+                return True
+            else:
+                logger.warning("Failed to establish Diglett WebSocket connection")
+                return False
+        except Exception as e:
+            logger.error(f"Error initializing Diglett connection: {e}")
+            return False
+    
+    async def verify_speaker_realtime(self, audio_data_b64: str) -> Optional[str]:
+        """
+        Verify speaker identity in real-time using Diglett WebSocket
+        
+        Args:
+            audio_data_b64: Base64 encoded audio chunk
+            
+        Returns:
+            speaker_id of matched speaker or None
+        """
+        if not self.speakers:
+            logger.info("No known speakers for verification")
+            return None
+            
+        try:
+            # Get all known embeddings for comparison
+            known_embeddings = []
+            speaker_ids = []
+            for speaker_id, speaker_data in self.speakers.items():
+                if speaker_data.get("embedding"):
+                    known_embeddings.append(speaker_data["embedding"])
+                    speaker_ids.append(speaker_id)
+            
+            if not known_embeddings:
+                logger.info("No speaker embeddings available for verification")
+                return None
+            
+            # Send to Diglett for verification
+            result = await self.diglett_ws.verify_speaker(audio_data_b64, known_embeddings)
+            
+            if result and "speaker" in result:
+                # Find closest matching speaker by comparing embeddings
+                detected_embedding = result["speaker"]
+                db_level = result.get("db", 0.0)
+                
+                # Simple embedding matching (you might want to use cosine similarity)
+                best_match_id = None
+                best_similarity = float('-inf')
+                
+                for i, speaker_id in enumerate(speaker_ids):
+                    # For now, use a simple comparison - you might want to implement
+                    # proper cosine similarity or euclidean distance
+                    if i < len(known_embeddings):
+                        # This is a placeholder - implement proper similarity calculation
+                        similarity = sum(a * b for a, b in zip(detected_embedding[:10], known_embeddings[i][:10]))
+                        if similarity > best_similarity:
+                            best_similarity = similarity
+                            best_match_id = speaker_id
+                
+                if best_match_id:
+                    logger.info(f"Real-time speaker verification: {best_match_id} (db: {db_level})")
+                    return best_match_id
+                    
+            return None
+            
+        except Exception as e:
+            logger.error(f"Real-time speaker verification error: {e}")
+            return None
 
 # Initialize orchestrator
 orchestrator = VoiceOrchestrator()
@@ -988,6 +1180,9 @@ class SetSpeakerNameRequest(BaseModel):
     speaker_id: str
     name: str
 
+class SpeakerVerificationRequest(BaseModel):
+    audio_data: str  # base64 encoded audio chunk
+
 @app.post("/set-speaker-name")
 async def set_speaker_name(request: SetSpeakerNameRequest):
     """Set the speaker name for a given speaker ID"""
@@ -1001,16 +1196,39 @@ async def set_speaker_name(request: SetSpeakerNameRequest):
 
 @app.post("/embed-speaker")
 async def embed_speaker(request: SpeakerEmbeddingRequest):
-    """Embed speaker from audio data"""
+    """Embed speaker from audio data using Diglett"""
     try:
         audio_data = base64.b64decode(request.audio_data)
-        speaker_id = await orchestrator.embed_speaker(audio_data)
-        if speaker_id:
-            return {"speaker_id": speaker_id}
+        speaker_result = await orchestrator.embed_speaker(audio_data)
+        if speaker_result:
+            return speaker_result
         else:
             return {"error": "Failed to embed speaker"}, 500
     except Exception as e:
         logger.error(f"Speaker embedding request error: {e}")
+        return {"error": str(e)}, 500
+
+@app.post("/verify-speaker")
+async def verify_speaker_realtime(request: SpeakerVerificationRequest):
+    """Real-time speaker verification using Diglett WebSocket"""
+    try:
+        detected_speaker_id = await orchestrator.verify_speaker_realtime(request.audio_data)
+        
+        if detected_speaker_id:
+            speaker_data = orchestrator._get_speaker_data(detected_speaker_id)
+            return {
+                "speaker_id": detected_speaker_id,
+                "speaker_name": speaker_data["name"] if speaker_data else "Unknown",
+                "confidence": "high"  # You could calculate actual confidence based on similarity
+            }
+        else:
+            return {
+                "speaker_id": None,
+                "speaker_name": "Unknown",
+                "confidence": "low"
+            }
+    except Exception as e:
+        logger.error(f"Real-time speaker verification error: {e}")
         return {"error": str(e)}, 500
 
 @app.post("/process-transcript")
@@ -1579,11 +1797,23 @@ async def startup_event():
     """Initialize services on startup"""
     logger.info("Voice Orchestrator starting up...")
     logger.info(f"Memory enabled: {orchestrator.memory_enabled}")
+    
+    # Initialize Diglett WebSocket connection
+    try:
+        await orchestrator.initialize_diglett_connection()
+    except Exception as e:
+        logger.warning(f"Could not initialize Diglett connection on startup: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up on shutdown"""
     logger.info("Voice Orchestrator shutting down...")
+    
+    # Clean up Diglett WebSocket connection
+    try:
+        await orchestrator.diglett_ws.disconnect()
+    except Exception as e:
+        logger.warning(f"Error disconnecting from Diglett: {e}")
 
 if __name__ == "__main__":
     import uvicorn

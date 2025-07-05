@@ -5,13 +5,14 @@ import { DESIGN_TOKENS } from '../design-system';
 import VoiceButton from '@/components/VoiceButton';
 import StatusIndicator from '@/components/StatusIndicator';
 import Waveform from '@/components/Waveform';
+import { VoicePipelineState } from '@/lib/voice-pipeline-service';
 
 export default function Home() {
-  const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'recording' | 'processing' | 'error'>('idle');
+  const [status, setStatus] = useState<VoicePipelineState>('idle');
   const [error, setError] = useState<string>('');
   const [lastTranscript, setLastTranscript] = useState<string>('');
   
-  const handleStatusChange = (newStatus: typeof status) => {
+  const handleStatusChange = (newStatus: VoicePipelineState) => {
     setStatus(newStatus);
     if (newStatus !== 'error') {
       setError('');

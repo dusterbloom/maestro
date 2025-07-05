@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { VoicePipelineState } from '@/lib/voice-pipeline-service';
 
 interface StatusIndicatorProps {
-  status: 'idle' | 'connecting' | 'connected' | 'recording' | 'processing' | 'error';
+  status: VoicePipelineState;
   error?: string;
 }
 
@@ -11,7 +12,7 @@ export default function StatusIndicator({ status, error }: StatusIndicatorProps)
   const [dots, setDots] = useState('');
   
   useEffect(() => {
-    if (status === 'connecting' || status === 'processing') {
+    if (status === 'connecting' || status === 'processing' || status === 'playing') {
       const interval = setInterval(() => {
         setDots(prev => prev.length >= 3 ? '' : prev + '.');
       }, 500);
@@ -34,6 +35,8 @@ export default function StatusIndicator({ status, error }: StatusIndicatorProps)
         return { text: 'Recording', color: 'text-red-600', bg: 'bg-red-50', icon: '🎤' };
       case 'processing':
         return { text: `Processing${dots}`, color: 'text-blue-600', bg: 'bg-blue-50', icon: '⚡' };
+      case 'playing':
+        return { text: `Speaking${dots}`, color: 'text-green-600', bg: 'bg-green-50', icon: '🔊' };
       case 'error':
         return { text: 'Error', color: 'text-red-700', bg: 'bg-red-100', icon: '❌' };
       default:
