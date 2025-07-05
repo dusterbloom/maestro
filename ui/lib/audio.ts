@@ -6,6 +6,8 @@ export class AudioRecorder {
   private isRecording = false;
   private onAudioDataCallback?: (audioData: Float32Array) => void;
   private onAudioLevelCallback?: (level: number) => void;
+  private mediaRecorder: MediaRecorder | null = null;
+  private audioChunks: Blob[] = [];
   
   // Voice activity detection for barge-in
   private currentAudioLevel = 0;
