@@ -19,6 +19,7 @@ class Config:
     STT_MODEL: str = os.getenv("STT_MODEL", "tiny")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gemma3n:latest")
     TTS_VOICE: str = os.getenv("TTS_VOICE", "af_bella")
+    SYSTEM_PROMPT_FILE: str = os.getenv("SYSTEM_PROMPT_FILE", "orchestrator/prompts/system_prompt.md")
     
     # Memory
     MEMORY_ENABLED: bool = os.getenv("MEMORY_ENABLED", "false").lower() == "true"
