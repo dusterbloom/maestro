@@ -192,21 +192,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
         whisperWs.onSentence(async (sentence) => {
           if (mounted) {
             lastUtteranceRef.current = sentence;
-            if (isWaitingForName && speakerId) {
-              try {
-                await fetch('/set-speaker-name', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ speaker_id: speakerId, name: sentence }),
-                });
-                setIsWaitingForName(false);
-                // Now that the name is set, re-process the original sentence that prompted the name request.
-                // This requires storing the original sentence. For now, we'll just send the name and let the next interaction proceed.
-              } catch (error) {
-                handleError("Failed to set speaker name");
-              }
-              return;
-            }
+            const handleSentenceProcessing = useCallback(async (sentence: string) => {
 
             console.log('Complete sentence received:', sentence);
             console.log(`🔍 SENTENCE CHECK: isPlaying=${isPlaying}, isRecording=${isRecording}, mounted=${mounted}`);
