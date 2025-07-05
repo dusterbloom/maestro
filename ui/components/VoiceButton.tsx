@@ -356,12 +356,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                         const data = JSON.parse(line.slice(6));
                         
                         if (data.type === 'sentence_audio') {
-                          if (data.text.toLowerCase().includes("what would you like me to call you")) {
-                            setIsWaitingForName(true);
-                          }
-                          if (data.text.toLowerCase().includes("provide a 5-second audio sample")) {
-                            setPromptForEmbedding(true);
-                          }
+                          
                           sentenceCount++;
                           console.log(`📝 Received sentence ${data.sequence}: ${data.text.slice(0, 30)}...`);
                           
