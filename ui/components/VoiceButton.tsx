@@ -117,6 +117,8 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
     clearAudioQueue();
   }, [clearAudioQueue]);
   
+  const lastUtteranceRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (promptForEmbedding) {
       const getSample = async () => {
@@ -138,6 +140,10 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
               if (data.speaker_id) {
                 setSpeakerId(data.speaker_id);
                 console.log("Speaker ID set:", data.speaker_id);
+                // Resubmit the last utterance with the new speaker ID
+                if (lastUtteranceRef.current) {
+                  whisperWsRef.current?.onSentence(lastUtteranceRef.current);
+                }
               } else {
                 handleError("Failed to get speaker ID");
               }
