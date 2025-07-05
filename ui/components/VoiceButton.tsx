@@ -191,6 +191,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
         
         whisperWs.onSentence(async (sentence) => {
           if (mounted) {
+            lastUtteranceRef.current = sentence;
             if (isWaitingForName && speakerId) {
               try {
                 await fetch('/set-speaker-name', {
