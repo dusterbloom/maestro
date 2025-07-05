@@ -1,6 +1,6 @@
 services:
   diglett:
-    image: 8igmac/diglett:latest
+    image: bigmac/diglett:latest
     ports:
       - "3210:80"
   orchestrator:
