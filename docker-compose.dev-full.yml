@@ -1,0 +1,29 @@
+services:
+  letta:
+    build:
+      context: .
+      dockerfile: letta-fastmem/Dockerfile
+    ports:
+      - "8283:8283"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - TOOL_EXEC_DIR=/app/tools_fastmem
+      - TOOL_EXEC_VENV_NAME=fastmem_env
+    volumes:
+      - ollama_models:/root/.ollama
+  diglett:
+    image: 8igmac/diglett:latest
+    ports:
+      - "3210:80"
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_MODELS=/root/.ollama
+
+volumes:
+  ollama_models:
