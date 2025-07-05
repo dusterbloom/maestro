@@ -1,7 +1,8 @@
-include:
-  - docker-compose.speaker.yml
-
 services:
+  diglett:
+    image: 8igmac/diglett:latest
+    ports:
+      - "3210:80"
   orchestrator:
     build:
       context: ./orchestrator
