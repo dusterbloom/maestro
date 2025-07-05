@@ -37,7 +37,8 @@
         "collabora/WhisperLive",
         "ollama/ollama",
         "FastAPI/FastAPI",
-        "remsky/Kokoro-FastAPI"
+        "remsky/Kokoro-FastAPI",
+        "koljab/RealtimeVoiceChat"
         ]
       }
   }

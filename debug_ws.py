@@ -5,7 +5,9 @@ import json
 
 async def test_connection():
     try:
-        print("Attempting to connect to ws://localhost:8000/ws")
+        # Use environment variable for WebSocket URL
+        ws_url = os.getenv("WHISPER_WS_URL", "ws://localhost:8000/ws")
+        print(f"Attempting to connect to {ws_url}")
         
         async with websockets.connect("ws://localhost:8000/ws") as websocket:
             print("✅ Connected successfully")

@@ -25,6 +25,10 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
   const voiceActivityRef = useRef<boolean>(false);
   const bargeInTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
+  // Audio queue management at component level for interruption access
+  const audioQueueRef = useRef<Array<{sequence: number, audioData: string, text: string}>>([]);
+  const nextToPlayRef = useRef<number>(1);
+  
   const updateStatus = useCallback((newStatus: typeof status) => {
     setStatus(newStatus);
     onStatusChange?.(newStatus);
@@ -36,21 +40,42 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
     onError?.(error);
   }, [onError, updateStatus]);
   
-  const handleBargeIn = useCallback(() => {
-    console.log('Handling barge-in: stopping TTS and starting recording');
+  const handleBargeIn = useCallback(async () => {
+    console.log('🛑 Audio Pipeline: USER INTERRUPT - Stopping TTS and starting recording');
     
-    // Cancel any ongoing TTS stream
+    // 1. Send server-side TTS interruption request immediately
+    if (whisperWsRef.current) {
+      try {
+        console.log('   → Sending server TTS interruption request');
+        const result = await whisperWsRef.current.sendInterruptTts(sessionIdRef.current);
+        if (result.success) {
+          console.log('   ✅ Server TTS interruption successful');
+        } else {
+          console.warn('   ⚠️ Server TTS interruption failed:', result.message);
+        }
+      } catch (error) {
+        console.error('   ❌ Server TTS interruption error:', error);
+      }
+    }
+    
+    // 2. Abort any ongoing TTS generation request (frontend control)
     if (currentStreamControllerRef.current) {
+      console.log('   → Aborting frontend TTS generation request');
       currentStreamControllerRef.current.abort();
       currentStreamControllerRef.current = null;
     }
     
-    // Stop all audio playback immediately
+    // 3. Stop all audio playback immediately (frontend audio control)
     if (playerRef.current) {
+      console.log('   → Stopping audio playback');
       playerRef.current.stopAll();
     }
     
-    // Start recording immediately if not already recording and connected
+    // 4. Update isPlaying state since we interrupted the audio
+    setIsPlaying(false);
+    console.log('   → Set isPlaying=false due to interruption');
+    
+    // 5. Start recording immediately if not already recording and connected
     if (!isRecording && status === 'connected') {
       // Use direct recording start to avoid circular dependency
       if (whisperWsRef.current?.isConnected() && recorderRef.current) {
@@ -66,13 +91,28 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
     }
   }, [isRecording, status, updateStatus]);
   
+  const clearAudioQueue = useCallback(() => {
+    console.log(`🧹 Clearing audio queue: ${audioQueueRef.current.length} pending sentences removed`);
+    audioQueueRef.current = [];
+    nextToPlayRef.current = 1;
+  }, []);
+
   const abortCurrentStream = useCallback(() => {
     if (currentStreamControllerRef.current) {
-      console.log('Aborting current TTS stream');
+      console.log('Aborting current TTS stream - Audio pipeline control');
       currentStreamControllerRef.current.abort();
       currentStreamControllerRef.current = null;
     }
-  }, []);
+    
+    // Also stop any playing audio immediately
+    if (playerRef.current) {
+      playerRef.current.stopAll();
+      setIsPlaying(false);
+    }
+    
+    // Clear pending audio queue
+    clearAudioQueue();
+  }, [clearAudioQueue]);
   
   useEffect(() => {
     let mounted = true;
@@ -108,11 +148,22 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
         whisperWs.onSentence(async (sentence) => {
           if (mounted) {
             console.log('Complete sentence received:', sentence);
+            console.log(`🔍 SENTENCE CHECK: isPlaying=${isPlaying}, isRecording=${isRecording}, mounted=${mounted}`);
             
-            // Abort any ongoing TTS stream before starting new one
+            // 🚨 CRITICAL: Completely block new TTS requests while audio is playing
+            if (isPlaying) {
+              console.log('🚨 BLOCKING NEW TTS: Audio is currently playing - ignoring sentence to prevent cascading voices');
+              return; // Do NOT process new sentences while TTS is playing
+            }
+            
+            // Only process if no audio is currently playing
+            console.log(`📝 Processing sentence (audio not playing): ${sentence}`);
+            
+            // Abort any ongoing TTS stream before starting new one (audio pipeline control)
+            console.log('🎯 Audio Pipeline: NEW REQUEST - Interrupting any current audio');
             abortCurrentStream();
             
-            // Send complete sentence to orchestrator for streaming LLM+TTS processing
+            // Send complete sentence to orchestrator for REAL-TIME streaming
             try {
               updateStatus('processing');
               
@@ -120,10 +171,13 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
               const streamController = new AbortController();
               currentStreamControllerRef.current = streamController;
               
+              console.log('🚀 REAL-TIME STREAMING: Using streaming endpoint for instant audio playback');
+              
               const response = await fetch('/api/process-transcript', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
+                  'X-Use-Streaming': 'true'  // Enable real-time streaming
                 },
                 body: JSON.stringify({
                   transcript: sentence,
@@ -136,44 +190,155 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                 throw new Error(`HTTP ${response.status}`);
               }
               
-              // Handle ultra-fast response (non-streaming)
-              const data = await response.json();
+              // Handle Server-Sent Events with sentence-level audio streaming
+              if (!response.body) {
+                throw new Error('No response stream available');
+              }
               
-              if (data.type === 'wav_audio' && data.data && playerRef.current) {
+              const eventSource = new ReadableStream({
+                start(controller) {
+                  const reader = response.body!.getReader();
+                  
+                  function pump(): Promise<void> {
+                    return reader.read().then(({ done, value }) => {
+                      if (done) {
+                        controller.close();
+                        return;
+                      }
+                      controller.enqueue(value);
+                      return pump();
+                    }).catch(error => {
+                      controller.error(error);
+                    });
+                  }
+                  
+                  return pump();
+                }
+              });
+              
+              const reader = eventSource.getReader();
+              const decoder = new TextDecoder();
+              let buffer = '';
+              let sentenceCount = 0;
+              // Use component-level queue refs for interruption access
+              audioQueueRef.current = []; // Reset queue for new stream
+              nextToPlayRef.current = 1;
+              
+              const playNextInQueue = async () => {
+                if (isPlaying) return;
+                
+                // Find the next sentence to play
+                const nextItem = audioQueueRef.current.find(item => item.sequence === nextToPlayRef.current);
+                if (!nextItem) return;
+                
+                setIsPlaying(true);  // ✅ FIX: Use React state setter, not local variable
+                console.log(`🎵 Playing sentence ${nextItem.sequence}: ${nextItem.text.slice(0, 30)}...`);
+                
+                try {
+                  // Decode base64 audio data
+                  const audioBytes = Uint8Array.from(atob(nextItem.audioData), c => c.charCodeAt(0));
+                  
+                  if (playerRef.current) {
+                    await playerRef.current.play(audioBytes.buffer);
+                    console.log(`✅ Sentence ${nextItem.sequence} played successfully!`);
+                  }
+                  
+                  // Remove played item and move to next
+                  const index = audioQueueRef.current.findIndex(item => item.sequence === nextToPlayRef.current);
+                  if (index >= 0) {
+                    audioQueueRef.current.splice(index, 1);
+                  }
+                  nextToPlayRef.current++;
+                  
+                  // Check if more sentences are queued, only set isPlaying=false when done
+                  if (audioQueueRef.current.length === 0) {
+                    setIsPlaying(false);  // ✅ Only stop when queue is empty
+                    console.log('🎵 All audio sentences completed, setting isPlaying=false');
+                  }
+                  
+                  // Play next item if available
+                  setTimeout(() => playNextInQueue(), 50); // Small delay between sentences
+                  
+                } catch (audioError) {
+                  console.error(`❌ Failed to play sentence ${nextItem.sequence}:`, audioError);
+                  
+                  // Remove failed item and check if queue is empty
+                  const index = audioQueueRef.current.findIndex(item => item.sequence === nextToPlayRef.current);
+                  if (index >= 0) {
+                    audioQueueRef.current.splice(index, 1);
+                  }
+                  nextToPlayRef.current++;
+                  
+                  if (audioQueueRef.current.length === 0) {
+                    setIsPlaying(false);
+                    console.log('🎵 Audio queue empty after error, setting isPlaying=false');
+                  }
+                  
+                  setTimeout(() => playNextInQueue(), 50);
+                }
+              };
+              
+              while (true) {
+                const { done, value } = await reader.read();
+                
+                if (done) {
+                  console.log('🎉 Real-time streaming complete!');
+                  break;
+                }
+                
                 // Check if stream was aborted
                 if (streamController.signal.aborted) {
-                  console.log('Audio playback skipped due to abort');
-                  return;
+                  console.log('🛑 Stream aborted by user');
+                  reader.cancel();
+                  break;
                 }
                 
-                console.log('LLM Response:', data.response_text);
-                console.log('Total latency:', data.latency_ms + 'ms');
-                
-                // Decode WAV audio data and play complete audio
-                const audioBytes = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
-                await playerRef.current.play(audioBytes.buffer);
-                
-                updateStatus('connected');
-                // Clear the controller reference
-                if (currentStreamControllerRef.current === streamController) {
-                  currentStreamControllerRef.current = null;
+                if (value) {
+                  buffer += decoder.decode(value, { stream: true });
+                  
+                  // Process complete lines
+                  const lines = buffer.split('\n');
+                  buffer = lines.pop() || ''; // Keep incomplete line
+                  
+                  for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                      try {
+                        const data = JSON.parse(line.slice(6));
+                        
+                        if (data.type === 'sentence_audio') {
+                          sentenceCount++;
+                          console.log(`📝 Received sentence ${data.sequence}: ${data.text.slice(0, 30)}...`);
+                          
+                          // Add to audio queue
+                          audioQueueRef.current.push({
+                            sequence: data.sequence,
+                            audioData: data.audio_data,
+                            text: data.text
+                          });
+                          
+                          // Start playing if this is the next expected sentence
+                          if (data.sequence === nextToPlayRef.current) {
+                            playNextInQueue();
+                          }
+                          
+                        } else if (data.type === 'complete') {
+                          console.log(`🎉 All ${data.total_sentences} sentences received!`);
+                          console.log(`📄 Complete response: ${data.full_text?.slice(0, 100)}...`);
+                        } else if (data.type === 'error') {
+                          console.error('❌ Streaming error:', data.message);
+                        }
+                      } catch (e) {
+                        console.error('Failed to parse streaming data:', e);
+                      }
+                    }
+                  }
                 }
-              } else if (data.type === 'error') {
-                console.error('TTS Error:', data.message);
-                console.log('LLM Response (no audio):', data.response_text);
-                updateStatus('connected');
-                // Clear the controller reference
-                if (currentStreamControllerRef.current === streamController) {
-                  currentStreamControllerRef.current = null;
-                }
-              } else {
-                console.log('Unexpected response format:', data);
-                console.log('Response type:', data.type, 'Has data:', !!data.data);
-                updateStatus('connected');
-                // Clear the controller reference
-                if (currentStreamControllerRef.current === streamController) {
-                  currentStreamControllerRef.current = null;
-                }
+              }
+              
+              updateStatus('connected');
+              // Clear the controller reference
+              if (currentStreamControllerRef.current === streamController) {
+                currentStreamControllerRef.current = null;
               }
               
             } catch (error: any) {
@@ -198,15 +363,66 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
           throw new Error('Failed to access microphone');
         }
         
-        // Set up voice activity detection for barge-in
+        // Set up voice activity detection for IMMEDIATE barge-in (< 100ms)
         recorder.onAudioLevel((level) => {
           const isVoiceActive = recorder.isVoiceActive();
           voiceActivityRef.current = isVoiceActive;
           
-          // If we detect voice activity while TTS is playing, trigger barge-in
-          if (isVoiceActive && isPlaying && !isRecording) {
-            console.log('Barge-in detected! Voice level:', level);
-            handleBargeIn();
+          // 🔍 DEBUG: Log voice activity levels to diagnose detection issues
+          if (level > 0.001) { // Only log when there's some audio
+            console.log(`🎤 VOICE DEBUG: level=${level.toFixed(4)}, active=${isVoiceActive}, isPlaying=${isPlaying}, isRecording=${isRecording}, threshold=${recorder.getVoiceActivityThreshold()}`);
+          }
+          
+          // 🚨 IMMEDIATE INTERRUPTION: If user speaks while TTS is playing OR queued
+          const hasPendingAudio = audioQueueRef.current.length > 0;
+          if (isVoiceActive && (isPlaying || hasPendingAudio) && !isRecording) {
+            console.log('🚨 IMMEDIATE BARGE-IN: Voice detected while TTS playing/queued - INSTANT STOP');
+            console.log(`   → isPlaying=${isPlaying}, pendingAudio=${hasPendingAudio}, queueSize=${audioQueueRef.current.length}`);
+            
+            // 1. INSTANT: Stop all audio playback
+            if (playerRef.current) {
+              playerRef.current.stopAll();
+              console.log('   ⚡ Audio stopped instantly');
+            }
+            
+            // 2. INSTANT: Clear all pending TTS sentences to prevent cascading voices
+            clearAudioQueue();
+            
+            // 3. INSTANT: Update state
+            setIsPlaying(false);
+            
+            // 4. INSTANT: Start recording 
+            if (whisperWsRef.current?.isConnected() && recorderRef.current) {
+              setIsRecording(true);
+              updateStatus('recording');
+              
+              recorderRef.current.start((audioData: Float32Array) => {
+                if (whisperWsRef.current?.isConnected()) {
+                  whisperWsRef.current.sendAudio(audioData.buffer);
+                }
+              });
+              console.log('   ⚡ Recording started instantly');
+            }
+            
+            // 5. BACKGROUND: Server interruption (don't wait for this)
+            if (whisperWsRef.current) {
+              whisperWsRef.current.sendInterruptTts(sessionIdRef.current).then(result => {
+                if (result.success) {
+                  console.log('   ✅ Server interruption completed in background');
+                } else {
+                  console.warn('   ⚠️ Server interruption failed:', result.message);
+                }
+              }).catch(error => {
+                console.error('   ❌ Server interruption error:', error);
+              });
+            }
+            
+            // 6. BACKGROUND: Abort frontend stream (don't wait)
+            if (currentStreamControllerRef.current) {
+              currentStreamControllerRef.current.abort();
+              currentStreamControllerRef.current = null;
+              console.log('   ✅ Frontend stream aborted in background');
+            }
           }
         });
         

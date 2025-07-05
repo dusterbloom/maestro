@@ -32,3 +32,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Roo Code
+.roo/
+
+.claude_code_config.json
