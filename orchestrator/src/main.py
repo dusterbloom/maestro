@@ -270,6 +270,13 @@ class VoiceOrchestrator:
         self.diglett_url = config.DIGLETT_URL
         self.memory_enabled = config.MEMORY_ENABLED
         self.amem_url = config.AMEM_URL
+
+        # Speaker ID to Name mapping (in-memory for now)
+        self.speaker_names = {}
+        self.next_anon_id = 1
+
+        # Load system prompt
+        self.system_prompt = self._load_system_prompt(config.SYSTEM_PROMPT_FILE)
         
         # Initialize sentence completion detector
         self.sentence_detector = SentenceCompletionDetector()
