@@ -14,6 +14,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'recording' | 'processing' | 'error'>('idle');
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [speakerId, setSpeakerId] = useState<string | null>(null);
   
   const whisperWsRef = useRef<VoiceWebSocket | null>(null);
   const recorderRef = useRef<AudioRecorder | null>(null);
