@@ -867,6 +867,20 @@ class VoiceOrchestrator:
         except Exception as e:
             logger.error(f"Error cleaning up session {session_id}: {e}")
 
+    async def embed_speaker(self, audio_data: bytes) -> Optional[str]:
+        """Embed speaker using Diglett"""
+        try:
+            async with httpx.AsyncClient(timeout=config.OLLAMA_TIMEOUT) as client:
+                response = await client.post(
+                    f"{self.diglett_url}/embed",
+                    files={"audio_file": audio_data}
+                )
+                response.raise_for_status()
+                return response.json().get("speaker_id")
+        except Exception as e:
+            logger.error(f"Speaker embedding error: {e}")
+            return None
+
 # Initialize orchestrator
 orchestrator = VoiceOrchestrator()
 
