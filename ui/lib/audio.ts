@@ -73,6 +73,15 @@ export class AudioRecorder {
       this.mediaStreamSource.connect(this.workletNode);
       this.workletNode.connect(this.audioContext.destination);
       
+      // Initialize MediaRecorder for 5-second sample
+      this.mediaRecorder = new MediaRecorder(this.stream);
+      this.mediaRecorder.ondataavailable = (event) => {
+        this.audioChunks.push(event.data);
+      };
+      this.mediaRecorder.onstop = () => {
+        console.log("MediaRecorder stopped. Chunks:", this.audioChunks);
+      };
+
       return true;
     } catch (error) {
       console.error('Failed to initialize audio recorder:', error);
