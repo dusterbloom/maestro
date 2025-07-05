@@ -182,7 +182,8 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                 },
                 body: JSON.stringify({
                   transcript: sentence,
-                  session_id: sessionIdRef.current
+                  session_id: sessionIdRef.current,
+                  speaker_id: speakerId,
                 }),
                 signal: streamController.signal  // Add abort signal
               });
