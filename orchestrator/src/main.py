@@ -1034,24 +1034,10 @@ async def process_transcript(request: TranscriptRequest):
         logger.info(f"Processing complete sentence: {cleaned_sentence} for speaker: {request.speaker_id}")
 
         # 2. Handle speaker identification and naming
-        speaker_name = None
         context = ""
         if request.speaker_id:
             speaker_name = orchestrator._get_speaker_name(request.speaker_id)
-            if speaker_name == "unknown user":
-                # If speaker is unknown, ask for their name and return immediately
-                response_text = "Hello! I don't seem to have your name on file. What would you like me to call you?"
-                audio_response = await orchestrator.synthesize(response_text)
-                total_time = (time.time() - start_time) * 1000
-                logger.info(f"Prompting for name from unknown speaker_id: {request.speaker_id}")
-                return {
-                    "response_text": response_text,
-                    "audio_data": base64.b64encode(audio_response).decode() if audio_response else None,
-                    "latency_ms": total_time,
-                    "sentence_complete": True,
-                    "prompt_for_name": True,
-                }
-            else:
+            if speaker_name != "unknown user":
                 # Known speaker, add to context for LLM
                 context = f"The current speaker is {speaker_name}. "
 
