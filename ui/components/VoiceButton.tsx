@@ -244,6 +244,8 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                   transcript: sentence,
                   session_id: sessionIdRef.current,
                   speaker_id: speakerId,
+                  speaker_recognized: speakerRecognized,
+                  embedding_attempts: embeddingAttempts,
                 }),
                 signal: streamController.signal  // Add abort signal
               });
