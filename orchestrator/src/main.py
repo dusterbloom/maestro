@@ -303,7 +303,7 @@ class VoiceOrchestrator:
                     f"{self.ollama_url}/api/generate",
                     json={
                         "model": config.LLM_MODEL,
-                        "prompt": prompt,
+                        "prompt": full_prompt,
                         "stream": True  # Enable real-time streaming
                     }
                 )
