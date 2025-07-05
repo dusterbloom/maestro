@@ -115,6 +115,42 @@ export class AudioRecorder {
       this.workletNode.port.postMessage({ type: 'stop' });
     }
   }
+
+  async getFiveSecondAudioSample(): Promise<Blob> {
+    return new Promise(async (resolve, reject) => {
+      if (!this.mediaRecorder || !this.audioContext) {
+        return reject(new Error("MediaRecorder not initialized."));
+      }
+
+      this.audioChunks = []; // Clear previous chunks
+
+      const handleDataAvailable = (event: BlobEvent) => {
+        this.audioChunks.push(event.data);
+      };
+
+      const handleStop = () => {
+        const audioBlob = new Blob(this.audioChunks, { type: 'audio/wav' });
+        this.mediaRecorder?.removeEventListener('dataavailable', handleDataAvailable);
+        this.mediaRecorder?.removeEventListener('stop', handleStop);
+        resolve(audioBlob);
+      };
+
+      this.mediaRecorder.addEventListener('dataavailable', handleDataAvailable);
+      this.mediaRecorder.addEventListener('stop', handleStop);
+
+      this.mediaRecorder.start();
+      console.log("MediaRecorder started for 5-second sample.");
+
+      // Stop after 5 seconds
+      setTimeout(() => {
+        if (this.mediaRecorder?.state === "recording") {
+          this.mediaRecorder.stop();
+          console.log("MediaRecorder stopping after 5 seconds.");
+        }
+      }, 5000);
+    });
+  }
+
   getAudioLevel(): number {
     return this.currentAudioLevel;
   }
