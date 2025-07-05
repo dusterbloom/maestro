@@ -11,6 +11,7 @@ class Config:
     WHISPER_URL: str = os.getenv("WHISPER_URL", "http://whisper-live:9090")
     OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
     TTS_URL: str = os.getenv("TTS_URL", "http://kokoro:8880")
+    DIGLETT_URL: str = os.getenv("DIGLETT_URL", "http://diglett:3210")
     AMEM_URL: str = os.getenv("AMEM_URL", "http://a-mem:8001")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379")
     
