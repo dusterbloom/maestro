@@ -467,32 +467,32 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
         playerRef.current = player;
         
         // Embed speaker after initialization
-        if (recorderRef.current) {
-          console.log("Getting 5-second audio sample for speaker embedding...");
-          const audioBlob = await recorderRef.current.getFiveSecondAudioSample();
-          const reader = new FileReader();
-          reader.readAsDataURL(audioBlob);
-          reader.onloadend = async () => {
-            const base64Audio = (reader.result as string).split(',')[1];
-            const orchestratorBaseUrl = process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || 'http://localhost:8000';
-            try {
-              const response = await fetch(`${orchestratorBaseUrl}/embed-speaker`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ audio_data: base64Audio }),
-              });
-              const data = await response.json();
-              if (data.speaker_id) {
-                setSpeakerId(data.speaker_id);
-                console.log("Speaker ID set:", data.speaker_id);
-              } else {
-                handleError("Failed to get speaker ID");
-              }
-            } catch (error) {
-              handleError("Failed to embed speaker");
-            }
-          };
-        }
+        // if (recorderRef.current) {
+        //   console.log("Getting 5-second audio sample for speaker embedding...");
+        //   const audioBlob = await recorderRef.current.getFiveSecondAudioSample();
+        //   const reader = new FileReader();
+        //   reader.readAsDataURL(audioBlob);
+        //   reader.onloadend = async () => {
+        //     const base64Audio = (reader.result as string).split(',')[1];
+        //     const orchestratorBaseUrl = process.env.NEXT_PUBLIC_ORCHESTRATOR_URL || 'http://localhost:8000';
+        //     try {
+        //       const response = await fetch(`${orchestratorBaseUrl}/embed-speaker`, {
+        //         method: 'POST',
+        //         headers: { 'Content-Type': 'application/json' },
+        //         body: JSON.stringify({ audio_data: base64Audio }),
+        //       });
+        //       const data = await response.json();
+        //       if (data.speaker_id) {
+        //         setSpeakerId(data.speaker_id);
+        //         console.log("Speaker ID set:", data.speaker_id);
+        //       } else {
+        //         handleError("Failed to get speaker ID");
+        //       }
+        //     } catch (error) {
+        //       handleError("Failed to embed speaker");
+        //     }
+        //   };
+        // }
         
       } catch (error) {
         if (mounted) {
