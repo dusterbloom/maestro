@@ -163,6 +163,101 @@ class VoiceService:
             print(f"Error accumulating audio: {e}")
             return None
     
+    async def _identify_or_register_speaker_definitively(self, embedding: List[float], session_id: str) -> Dict:
+        """Definitively identify existing speaker or register new one with ChromaDB storage"""
+        try:
+            audio_hash = hashlib.md5(str(embedding).encode()).hexdigest()[:8]
+            
+            if self.registered_speaker:
+                # Check similarity with registered speaker
+                stored_embedding = self.registered_speaker["embedding"]
+                confidence = self._calculate_similarity(embedding, stored_embedding)
+                
+                if confidence >= self.confidence_threshold:
+                    # DEFINITIVE RECOGNITION - high confidence match
+                    event = SpeakerEvent(
+                        event_type="speaker_identified",
+                        user_id=self.registered_speaker["user_id"],
+                        confidence=confidence,
+                        timestamp=datetime.utcnow().isoformat(),
+                        audio_hash=audio_hash,
+                        session_id=session_id,
+                        context={"name": self.registered_speaker["name"], "recognition_type": "definitive"}
+                    )
+                    
+                    await self.emit_speaker_event(event)
+                    
+                    return {
+                        "status": "identified",
+                        "user_id": self.registered_speaker["user_id"],
+                        "name": self.registered_speaker["name"],
+                        "confidence": confidence,
+                        "is_definitive": True,
+                        "greeting": f"Welcome back, {self.registered_speaker['name']}! "
+                    }
+                else:
+                    # Different speaker - register as new user
+                    await self._register_new_speaker_to_storage(embedding, session_id)
+                    return {
+                        "status": "registered",
+                        "user_id": "new_speaker",
+                        "name": "Friend",
+                        "confidence": 1.0,
+                        "is_new": True,
+                        "is_definitive": True,
+                        "greeting": "Hello! I don't recognize your voice. What should I call you? "
+                    }
+            else:
+                # No registered speaker - register this one definitively
+                result = await self._register_new_speaker_to_storage(embedding, session_id)
+                return result
+                
+        except Exception as e:
+            print(f"Error in definitive speaker identification: {e}")
+            return {"status": "error", "message": str(e)}
+    
+    async def _register_new_speaker_to_storage(self, embedding: List[float], session_id: str) -> Dict:
+        """Register new speaker to both local registry and ChromaDB/Redis storage"""
+        try:
+            user_id = f"speaker_{int(time.time())}"
+            
+            # Store locally for immediate recognition
+            self.registered_speaker = {
+                "user_id": user_id,
+                "name": "Friend",  # Default name until they tell us
+                "embedding": embedding,
+                "confidence_threshold": self.confidence_threshold
+            }
+            
+            # TODO: Store in ChromaDB and Redis via memory service
+            # This will be handled by the agentic system when name is learned
+            
+            event = SpeakerEvent(
+                event_type="speaker_registered",
+                user_id=user_id,
+                confidence=1.0,
+                timestamp=datetime.utcnow().isoformat(),
+                audio_hash=hashlib.md5(str(embedding).encode()).hexdigest()[:8],
+                session_id=session_id,
+                context={"registration_type": "definitive", "is_first_speaker": True}
+            )
+            
+            await self.emit_speaker_event(event)
+            
+            return {
+                "status": "registered",
+                "user_id": user_id,
+                "name": "Friend",
+                "confidence": 1.0,
+                "is_new": True,
+                "is_definitive": True,
+                "greeting": "Hello! I don't think we've met before. What should I call you? "
+            }
+            
+        except Exception as e:
+            print(f"Error registering new speaker: {e}")
+            return {"status": "error", "message": str(e)}
+
     async def _identify_or_register_speaker(self, embedding: List[float], session_id: str) -> Dict:
         """Identify existing speaker or register new one based on confidence"""
         try:
