@@ -103,7 +103,6 @@ services:
     ports:
       - "3001:3001"
     environment:
-      - NEXT_PUBLIC_WS_URL=${WS_URL:-ws://localhost:8000/ws/v1/voice}
       - ORCHESTRATOR_URL=${ORCHESTRATOR_URL:-http://orchestrator:8000}
       - NEXT_PUBLIC_WHISPER_WS_URL=${WHISPER_WS_URL:-ws://localhost:9090}
     depends_on:
