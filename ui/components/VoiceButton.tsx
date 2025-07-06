@@ -217,7 +217,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                 const audioBytes = new Uint8Array(lastRecordedAudioRef.current);
                 const audioBase64 = btoa(String.fromCharCode(...audioBytes));
                 requestBody.audio_data = audioBase64;
-                console.log('🎭 Including 5-second audio buffer for magical speaker recognition');
+                console.log('🎭 Including 10-second audio buffer for definitive speaker recognition');
               }
               
               const response = await fetch('/api/process-transcript', {
