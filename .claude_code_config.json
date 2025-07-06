@@ -38,7 +38,8 @@
         "ollama/ollama",
         "FastAPI/FastAPI",
         "remsky/Kokoro-FastAPI",
-        "koljab/RealtimeVoiceChat"
+        "koljab/RealtimeVoiceChat",
+        "8igMac/diglett"
         ]
       }
   }
