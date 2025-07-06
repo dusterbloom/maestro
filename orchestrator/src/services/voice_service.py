@@ -71,7 +71,7 @@ class AudioBufferManager:
         int16_array = (float_array * 32767).astype(np.int16)
         return int16_array.tobytes()
     
-    def get_buffer_as_wav(self, apply_vad: bool = True, vad_threshold: float = 0.01) -> bytes:
+    def get_buffer_as_wav(self, apply_vad: bool = True, vad_threshold: float = None) -> bytes:
         """Get current buffer as WAV file bytes for Diglett with optional VAD filtering"""
         if not self.audio_buffer:
             return b""
