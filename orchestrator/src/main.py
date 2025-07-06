@@ -545,6 +545,28 @@ Key behaviors:
                 "speaker_info": {"user_id": "guest", "name": "Friend", "is_new": False}
             }
 
+    async def passively_accumulate_speaker_audio(self, audio_bytes: bytes, session_id: str):
+        """🚀 PASSIVE: Accumulate audio chunks in background without blocking conversation"""
+        try:
+            # Get or create buffer manager for this session
+            if session_id not in self.session_audio_buffers:
+                self.session_audio_buffers[session_id] = AudioBufferManager()
+            
+            buffer_manager = self.session_audio_buffers[session_id]
+            
+            # Convert audio to float array and add to buffer
+            import numpy as np
+            float_array = np.frombuffer(audio_bytes, dtype=np.float32)
+            buffer_ready = buffer_manager.add_audio_chunk(float_array)
+            
+            if buffer_ready:
+                # We have 10 seconds! Start background identification
+                logger.info(f"🔄 Background: 10 seconds accumulated for session {session_id} - starting speaker identification")
+                asyncio.create_task(self._perform_background_speaker_identification(session_id, buffer_manager))
+                
+        except Exception as e:
+            logger.error(f"❌ Passive audio accumulation failed for session {session_id}: {e}")
+
 # Initialize orchestrator
 orchestrator = VoiceOrchestrator()
 
