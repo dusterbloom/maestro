@@ -13,6 +13,8 @@ class Config:
     TTS_URL: str = os.getenv("TTS_URL", "http://kokoro:8880")
     AMEM_URL: str = os.getenv("AMEM_URL", "http://a-mem:8001")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379")
+    DIGLETT_URL: str = os.getenv("DIGLETT_URL", "http://diglett:80")
+    CHROMADB_URL: str = os.getenv("CHROMADB_URL", "http://chromadb:8002")
     
     # Model Configuration
     STT_MODEL: str = os.getenv("STT_MODEL", "tiny")
