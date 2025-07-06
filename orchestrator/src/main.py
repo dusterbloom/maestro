@@ -498,6 +498,52 @@ Key behaviors:
                 return response
                 
         return None
+    
+    async def _perform_background_speaker_identification(self, session_id: str, buffer_manager):
+        """🚀 NON-BLOCKING: Perform speaker identification in background"""
+        try:
+            logger.info(f"🔄 Background speaker identification starting for session {session_id}")
+            
+            # Get WAV format audio for Diglett
+            wav_bytes = buffer_manager.get_buffer_as_wav()
+            
+            # Get embedding from Diglett
+            embedding = await self.voice_service.get_embedding(wav_bytes)
+            if not embedding:
+                logger.error(f"❌ Background identification failed - no embedding for session {session_id}")
+                # Keep as guest but mark as completed
+                self.session_speaker_states[session_id] = {
+                    "status": "completed", 
+                    "speaker_info": {"user_id": "guest", "name": "Friend", "is_new": False}
+                }
+                return
+            
+            # Perform definitive identification
+            result = await self.voice_service._identify_or_register_speaker_definitively(embedding, session_id)
+            
+            # Store result in session state
+            self.session_speaker_states[session_id] = {
+                "status": "identified",
+                "speaker_info": result
+            }
+            
+            # Get agentic context
+            if self.agentic_speaker_system and result.get("status") in ["identified", "registered"]:
+                agentic_context = self.agentic_speaker_system.get_current_speaker_context()
+                if agentic_context:
+                    result["greeting"] = agentic_context
+                    # Update cached result
+                    self.session_speaker_states[session_id]["speaker_info"] = result
+            
+            logger.info(f"✅ Background speaker identification completed for session {session_id}: {result}")
+            
+        except Exception as e:
+            logger.error(f"❌ Background speaker identification failed for session {session_id}: {e}")
+            # Fallback to guest
+            self.session_speaker_states[session_id] = {
+                "status": "completed",
+                "speaker_info": {"user_id": "guest", "name": "Friend", "is_new": False}
+            }
 
 # Initialize orchestrator
 orchestrator = VoiceOrchestrator()
