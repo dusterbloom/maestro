@@ -25,7 +25,10 @@ async def create_embedding(file: UploadFile = File(...)):
     """Create a speaker embedding from a 5-second audio file."""
     try:
         audio_data = await file.read()
-        signal, fs = torchaudio.load(audio_data)
+        
+        # Convert bytes to file-like object for torchaudio
+        audio_buffer = io.BytesIO(audio_data)
+        signal, fs = torchaudio.load(audio_buffer, format="wav")
         
         # Calculate average dB level
         audio_rms = torch.sqrt(torch.mean(signal ** 2))
@@ -33,6 +36,8 @@ async def create_embedding(file: UploadFile = File(...)):
         
         with torch.no_grad():
             embedding = classifier.encode_batch(signal)[0][0]
+        
+        logger.info(f"Generated embedding with {len(embedding)} dimensions, avg_dB: {avg_db:.2f}")
         
         # Return format matching what VoiceService expects
         return {
