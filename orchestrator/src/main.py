@@ -133,7 +133,7 @@ class VoiceOrchestrator:
                 self.session_states[session_id]["status"] = "identified"
                 profile = await self.memory_service.get_speaker_profile(self.session_states[session_id]["user_id"])
                 await self.send_event(session_id, "speaker.renamed", {"user_id": profile["user_id"], "new_name": profile["name"]})
-                llm_response_text = await self.generate_llm_response(f"Confirm to the user, whose name is {profile["name"]}, that you will remember their name.")
+                llm_response_text = await self.generate_llm_response(f"Confirm to the user, whose name is {profile['name']}, that you will remember their name.")
             else:
                 llm_response_text = await self.generate_llm_response(f"I couldn't quite get your name from '{transcript}'. Could you please say it again?")
         else:
