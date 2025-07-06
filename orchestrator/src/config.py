@@ -53,6 +53,10 @@ class Config:
     SPEAKER_VAD_THRESHOLD: float = float(os.getenv("SPEAKER_VAD_THRESHOLD", "0.01"))
     SPEAKER_VAD_MIN_SEGMENT_MS: int = int(os.getenv("SPEAKER_VAD_MIN_SEGMENT_MS", "200"))
     SPEAKER_VAD_PAD_MS: int = int(os.getenv("SPEAKER_VAD_PAD_MS", "100"))
+    
+    # Resemblyzer Speaker Recognition Settings
+    SPEAKER_SIMILARITY_THRESHOLD: float = float(os.getenv("SPEAKER_SIMILARITY_THRESHOLD", "0.7"))
+    RESEMBLYZER_DEVICE: str = os.getenv("RESEMBLYZER_DEVICE", "cpu")  # "cpu" or "cuda"
 
 # Single config instance
 config = Config()
