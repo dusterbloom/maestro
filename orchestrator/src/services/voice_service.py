@@ -104,9 +104,10 @@ class AudioBufferManager:
         wav_buffer.seek(0)
         return wav_buffer.read()
     
-    def _extract_voice_segments(self, audio_array: np.ndarray, threshold: float = 0.01, 
-                               min_segment_duration_ms: int = 200, 
-                               pad_duration_ms: int = 100) -> np.ndarray:
+    def _extract_voice_segments(self, audio_array: np.ndarray, 
+                               threshold: float = None, 
+                               min_segment_duration_ms: int = None, 
+                               pad_duration_ms: int = None) -> np.ndarray:
         """Extract voice-active segments from audio using simple energy-based VAD"""
         
         # Calculate energy in sliding window
