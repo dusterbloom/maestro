@@ -216,10 +216,12 @@ class AudioBufferManager:
         return len(self.audio_buffer) / self.sample_rate
 
 class VoiceService:
-    """Enhanced VoiceService with 10-second buffering for definitive speaker recognition"""
+    """Enhanced VoiceService with 10-second buffering for definitive speaker recognition using Resemblyzer"""
     
     def __init__(self):
-        self.client = httpx.AsyncClient(base_url=config.DIGLETT_URL, timeout=15.0)
+        # Initialize Resemblyzer voice encoder
+        logger.info(f"Initializing Resemblyzer VoiceEncoder on device: {config.RESEMBLYZER_DEVICE}")
+        self.voice_encoder = VoiceEncoder(device=config.RESEMBLYZER_DEVICE)
         
         # Audio buffer for accumulating 10-second samples
         self.audio_buffer_manager = AudioBufferManager()
@@ -230,8 +232,8 @@ class VoiceService:
         # Event handlers for agentic responses
         self.event_handlers = {}
         
-        # Confidence settings for definitive recognition
-        self.confidence_threshold = 0.7  # Lower threshold for better recognition
+        # Confidence settings for definitive recognition (using cosine similarity)
+        self.confidence_threshold = config.SPEAKER_SIMILARITY_THRESHOLD  # Cosine similarity threshold
         self.registration_confidence = 0.8  # Confidence for auto-registration
     
     def on_speaker_event(self, event_type: str):
