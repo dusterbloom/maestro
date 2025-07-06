@@ -89,12 +89,12 @@ class AudioBufferManager:
         return len(self.audio_buffer) / self.sample_rate
 
 class VoiceService:
-    """Enhanced VoiceService with 5-second buffering and agentic responses"""
+    """Enhanced VoiceService with 10-second buffering for definitive speaker recognition"""
     
     def __init__(self):
-        self.client = httpx.AsyncClient(base_url=config.DIGLETT_URL, timeout=10.0)
+        self.client = httpx.AsyncClient(base_url=config.DIGLETT_URL, timeout=15.0)
         
-        # Audio buffer for accumulating 5-second samples
+        # Audio buffer for accumulating 10-second samples
         self.audio_buffer_manager = AudioBufferManager()
         
         # Speaker registry for single-speaker magical recognition
@@ -103,9 +103,9 @@ class VoiceService:
         # Event handlers for agentic responses
         self.event_handlers = {}
         
-        # Confidence settings
-        self.confidence_threshold = 0.8  # High threshold for magical recognition
-        self.registration_confidence = 0.9  # Very high threshold for registration
+        # Confidence settings for definitive recognition
+        self.confidence_threshold = 0.7  # Lower threshold for better recognition
+        self.registration_confidence = 0.8  # Confidence for auto-registration
     
     def on_speaker_event(self, event_type: str):
         """Decorator to register event handlers"""
