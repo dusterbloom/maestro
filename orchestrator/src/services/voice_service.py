@@ -513,20 +513,46 @@ class VoiceService:
     async def get_embedding(self, audio_data: bytes) -> list[float] | None:
         """Get embedding from Diglett service using WAV format"""
         try:
+            print(f"🎤 Sending {len(audio_data)} bytes of WAV audio to Diglett for embedding...")
+            
             # audio_data should now be WAV format from get_buffer_as_wav()
             # Send as file upload (Diglett expects WAV file upload)
             files = {"file": ("audio.wav", audio_data, "audio/wav")}
             response = await self.client.post("/embed", files=files)
-            response.raise_for_status()
-            result = response.json()
             
-            # Diglett returns direct dict format: {"speaker_embedding": [...], "avg_db": float, "speaker_name": str}
+            print(f"🔍 Diglett response status: {response.status_code}")
+            print(f"🔍 Diglett response headers: {dict(response.headers)}")
+            
+            response.raise_for_status()
+            
+            # Check content type
+            content_type = response.headers.get('content-type', '')
+            if 'application/json' not in content_type:
+                print(f"❌ Diglett returned non-JSON content-type: {content_type}")
+                response_text = response.text[:200] + "..." if len(response.text) > 200 else response.text
+                print(f"❌ Response content preview: {response_text}")
+                return None
+            
+            result = response.json()
+            print(f"✅ Diglett JSON response: {result}")
+            
+            # Diglett returns: {"speaker_name": str, "speaker_embedding": [float array], "avg_db": float}
             if isinstance(result, dict) and "speaker_embedding" in result:
-                print(f"✅ Successfully got embedding from Diglett (length: {len(result['speaker_embedding'])})")
-                return result.get("speaker_embedding")
+                embedding = result.get("speaker_embedding")
+                speaker_name = result.get("speaker_name", "Unknown")
+                avg_db = result.get("avg_db", 0.0)
+                
+                print(f"✅ Successfully got embedding from Diglett:")
+                print(f"   → Speaker: {speaker_name}")
+                print(f"   → Embedding length: {len(embedding) if embedding else 0}")
+                print(f"   → Average dB: {avg_db}")
+                
+                return embedding
                 
             print(f"❌ Unexpected Diglett response format: {result}")
             return None
+            
         except Exception as e:
             print(f"❌ Error getting embedding from Diglett: {e}")
+            print(f"❌ Exception type: {type(e).__name__}")
             return None
