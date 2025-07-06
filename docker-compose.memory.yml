@@ -1,6 +1,7 @@
 # Memory components add-on for conversation persistence and speaker identification
 services:
   orchestrator:
+    build: ./orchestrator
     environment:
       - MEMORY_ENABLED=true
       - DIGLETT_URL=http://diglett:80
