@@ -25,14 +25,16 @@ class SpeakerEvent:
 class AudioBufferManager:
     """Manages 10-second audio buffer accumulation for definitive speaker recognition"""
     
-    def __init__(self, buffer_duration_ms: int = 10000, sample_rate: int = 16000):
+    def __init__(self, buffer_duration_ms: int = 10000, sample_rate: int = 16000, timeout_seconds: int = 30):
         self.buffer_duration_ms = buffer_duration_ms
         self.sample_rate = sample_rate
         self.max_samples = int((buffer_duration_ms / 1000) * sample_rate)
+        self.timeout_seconds = timeout_seconds
         
         # Audio buffer (deque for efficient append/pop)
         self.audio_buffer = deque(maxlen=self.max_samples)
         self.buffer_start_time = None
+        self.last_audio_time = None
         
     def add_audio_chunk(self, audio_chunk: np.ndarray) -> bool:
         """Add audio chunk to buffer. Returns True if buffer is ready (5+ seconds)"""
