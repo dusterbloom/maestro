@@ -372,10 +372,10 @@ Key behaviors:
         except Exception as e:
             logger.error(f"Error cleaning up session {session_id}: {e}")
 
-    # ENHANCED: Magical speaker identification with 5-second buffering
+    # ENHANCED: Definitive speaker identification with 10-second buffering
     async def accumulate_speaker_audio(self, audio_data: bytes, session_id: str) -> dict:
         """
-        Accumulate audio for magical speaker recognition after 5 seconds
+        Accumulate audio for definitive speaker recognition after 10 seconds
         Returns progress or speaker identification result
         """
         if not self.memory_enabled or not self.voice_service:
