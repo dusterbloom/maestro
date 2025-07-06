@@ -11,7 +11,21 @@ class VoiceService:
             response = await self.client.post("/embed", files=files)
             response.raise_for_status()
             result = response.json()
-            return result.get("speaker_embedding")
+            
+            # Diglett returns [data, status_code] format
+            if isinstance(result, list) and len(result) >= 1:
+                data = result[0]
+                if isinstance(data, dict):
+                    return data.get("speaker_embedding")
+                elif isinstance(data, list):
+                    # If the embedding is directly a list of floats
+                    return data
+            
+            # Fallback for dict format
+            if isinstance(result, dict):
+                return result.get("speaker_embedding")
+                
+            return None
         except httpx.HTTPError as e:
             print(f"Error getting embedding from Diglett: {e}")
             return None
