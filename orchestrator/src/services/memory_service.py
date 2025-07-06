@@ -1,7 +1,7 @@
 import chromadb
 import redis.asyncio as redis
 import uuid
-from ..config import CHROMADB_URL, REDIS_URL
+from config import CHROMADB_URL, REDIS_URL
 
 class MemoryService:
     def __init__(self):
