@@ -1,15 +1,18 @@
 import chromadb
 import redis.asyncio as redis
 import uuid
-import time
+import asyncio
 from config import config
 
 class MemoryService:
     def __init__(self):
         self.redis_client = redis.from_url(config.REDIS_URL, decode_responses=True)
-        
-        max_retries = 10
-        retry_delay = 5  # seconds
+        self.chroma_client = None
+        self.collection = None
+
+    async def initialize_chroma_client(self):
+        max_retries = 30  # Increased retries
+        retry_delay = 2  # seconds
 
         for i in range(max_retries):
             try:
@@ -17,11 +20,11 @@ class MemoryService:
                 # Attempt to get a collection to verify connection
                 self.collection = self.chroma_client.get_or_create_collection("speaker_embeddings")
                 print(f"Successfully connected to ChromaDB after {i+1} attempts.")
-                break
+                return
             except Exception as e:
                 print(f"Attempt {i+1}/{max_retries} to connect to ChromaDB failed: {e}")
                 if i < max_retries - 1:
-                    time.sleep(retry_delay)
+                    await asyncio.sleep(retry_delay)
                 else:
                     raise # Re-raise the last exception if all retries fail
 
