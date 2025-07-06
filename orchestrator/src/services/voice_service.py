@@ -124,7 +124,7 @@ class VoiceService:
                 print(f"Event handler error for {event.event_type}: {e}")
     
     async def accumulate_audio_chunk(self, audio_chunk: bytes, session_id: str) -> Optional[Dict]:
-        """Accumulate audio chunk and check for speaker when 5 seconds reached"""
+        """Accumulate audio chunk and check for speaker when 10 seconds reached"""
         try:
             # Convert bytes to float32 array
             float_array = np.frombuffer(audio_chunk, dtype=np.float32)
@@ -133,30 +133,30 @@ class VoiceService:
             buffer_ready = self.audio_buffer_manager.add_audio_chunk(float_array)
             
             if buffer_ready:
-                # We have 5 seconds - perform speaker recognition
-                buffer_bytes = self.audio_buffer_manager.get_buffer_as_bytes()
+                # We have 10 seconds - perform definitive speaker recognition
+                wav_bytes = self.audio_buffer_manager.get_buffer_as_wav()
                 
-                # Get embedding
-                embedding = await self.get_embedding(buffer_bytes)
+                # Get embedding using WAV format
+                embedding = await self.get_embedding(wav_bytes)
                 if not embedding:
                     self.audio_buffer_manager.clear_buffer()
                     return None
                 
-                # Check for speaker recognition
-                result = await self._identify_or_register_speaker(embedding, session_id)
+                # Check for speaker recognition with definitive result
+                result = await self._identify_or_register_speaker_definitively(embedding, session_id)
                 
                 # Clear buffer for next accumulation
                 self.audio_buffer_manager.clear_buffer()
                 
                 return result
             
-            # Not ready yet - return buffer status
+            # Not ready yet - return buffer status  
             duration = self.audio_buffer_manager.get_buffer_duration_seconds()
             return {
                 "status": "accumulating",
                 "buffer_duration": duration,
-                "target_duration": 5.0,
-                "progress": duration / 5.0
+                "target_duration": 10.0,
+                "progress": duration / 10.0
             }
             
         except Exception as e:
