@@ -4,7 +4,6 @@ services:
     build: ./orchestrator
     environment:
       - MEMORY_ENABLED=true
-      - DIGLETT_URL=http://diglett:80
       - CHROMADB_URL=http://chromadb:8000
       - REDIS_URL=redis://redis:6379
       - WHISPER_URL=${WHISPER_URL:-http://whisper-live:9090}
@@ -13,8 +12,6 @@ services:
       - LLM_MODEL=${LLM_MODEL:-gemma3n:latest}
       - TTS_VOICE=${TTS_VOICE:-af_bella}
     depends_on:
-      diglett:
-        condition: service_started
       chromadb:
         condition: service_healthy
       redis:
