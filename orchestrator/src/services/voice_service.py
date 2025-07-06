@@ -23,9 +23,9 @@ class SpeakerEvent:
     context: Dict
 
 class AudioBufferManager:
-    """Manages 5-second audio buffer accumulation for accurate speaker recognition"""
+    """Manages 10-second audio buffer accumulation for definitive speaker recognition"""
     
-    def __init__(self, buffer_duration_ms: int = 5000, sample_rate: int = 16000):
+    def __init__(self, buffer_duration_ms: int = 10000, sample_rate: int = 16000):
         self.buffer_duration_ms = buffer_duration_ms
         self.sample_rate = sample_rate
         self.max_samples = int((buffer_duration_ms / 1000) * sample_rate)
