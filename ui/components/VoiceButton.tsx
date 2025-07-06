@@ -574,8 +574,8 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
           // ENHANCED: Store chunks for magical speaker recognition
           audioChunksRef.current.push(new Float32Array(audioData));
           
-          // Keep last 5 seconds of audio
-          const maxSamples = 16000 * 5;
+          // Keep last 10 seconds of audio
+          const maxSamples = 16000 * 10;
           let totalSamples = audioChunksRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
           
           while (totalSamples > maxSamples && audioChunksRef.current.length > 1) {
