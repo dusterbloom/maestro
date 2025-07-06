@@ -103,7 +103,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
               if (removed) totalSamples -= removed.length;
             }
             
-            // Store the full 5-second buffer for speaker identification
+            // Store the full 10-second buffer for definitive speaker identification
             if (audioChunksRef.current.length > 0) {
               const combinedLength = audioChunksRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
               const combinedAudio = new Float32Array(combinedLength);
