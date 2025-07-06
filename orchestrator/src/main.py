@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from config import config
 from services.voice_service import VoiceService
 from services.memory_service import MemoryService
+from services.speaker_events import AgenticSpeakerSystem
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -249,13 +250,19 @@ class VoiceOrchestrator:
         # Track active TTS sessions for interruption capability
         self.active_tts_sessions = {}  # session_id -> {"thread": Thread, "queue": Queue, "abort_flag": Event}
         
-        # Speaker embedding services (NEW)
+        # Speaker embedding services with agentic system (ENHANCED)
         if self.memory_enabled:
             self.voice_service = VoiceService()
             self.memory_service = MemoryService()
+            # Initialize agentic speaker system
+            self.agentic_speaker_system = AgenticSpeakerSystem(self.voice_service, self.memory_service)
         else:
             self.voice_service = None
             self.memory_service = None
+            self.agentic_speaker_system = None
+            
+        # Track audio chunks for 5-second accumulation
+        self.session_audio_chunks = {}  # session_id -> list of audio chunks
 
     async def generate_response(self, text: str, context: str = "") -> str:
         """Generate response using Ollama with streaming"""
@@ -350,52 +357,62 @@ class VoiceOrchestrator:
         except Exception as e:
             logger.error(f"Error cleaning up session {session_id}: {e}")
 
-    # NEW: Speaker identification methods
-    async def identify_speaker(self, audio_data: bytes, session_id: str) -> dict:
+    # ENHANCED: Magical speaker identification with 5-second buffering
+    async def accumulate_speaker_audio(self, audio_data: bytes, session_id: str) -> dict:
         """
-        Identify speaker from audio data and return speaker context
-        Returns: {"user_id": str, "name": str, "is_new": bool, "greeting": str}
+        Accumulate audio for magical speaker recognition after 5 seconds
+        Returns progress or speaker identification result
         """
         if not self.memory_enabled or not self.voice_service:
             return {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
             
         try:
-            # Generate voice embedding
-            embedding = await self.voice_service.get_embedding(audio_data)
-            if not embedding:
-                logger.warning("Could not generate voice embedding")
-                return {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
+            # Use enhanced voice service with 5-second buffering
+            result = await self.voice_service.accumulate_audio_chunk(audio_data, session_id)
             
-            # Try to find existing speaker
-            found_user_id = await self.memory_service.find_speaker_by_embedding(embedding)
-            
-            if found_user_id:
-                # Known speaker
-                profile = await self.memory_service.get_speaker_profile(found_user_id)
-                name = profile.get("name", "Speaker")
-                logger.info(f"Identified known speaker: {name} ({found_user_id})")
-                return {
-                    "user_id": found_user_id,
-                    "name": name,
-                    "is_new": False,
-                    "greeting": f"Hello {name}! "
-                }
-            else:
-                # New speaker - create profile
-                new_user_id = await self.memory_service.create_speaker_profile(embedding)
-                profile = await self.memory_service.get_speaker_profile(new_user_id)
-                temp_name = profile.get("name", "New Speaker")
-                logger.info(f"Created new speaker profile: {temp_name} ({new_user_id})")
-                return {
-                    "user_id": new_user_id,
-                    "name": temp_name,
-                    "is_new": True,
-                    "greeting": "Hello! I don't think we've met before. What should I call you? "
-                }
+            if result and result.get("status") in ["identified", "registered", "uncertain"]:
+                # Speaker recognition completed - get agentic context
+                if self.agentic_speaker_system and result.get("status") != "uncertain":
+                    agentic_context = self.agentic_speaker_system.get_current_speaker_context()
+                    if agentic_context:
+                        result["greeting"] = agentic_context
+                        
+                logger.info(f"🎭 Magical speaker recognition: {result}")
                 
+            return result or {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
+            
         except Exception as e:
-            logger.error(f"Speaker identification error: {e}")
+            logger.error(f"Speaker accumulation error: {e}")
             return {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
+    
+    async def handle_name_learning(self, transcript: str, session_id: str) -> Optional[str]:
+        """
+        Check if transcript contains name introduction and learn it
+        Returns personalized response if name was learned
+        """
+        if not self.agentic_speaker_system:
+            return None
+            
+        # Simple name detection patterns
+        name_patterns = [
+            r"my name is (\w+)",
+            r"i'm (\w+)",
+            r"call me (\w+)",
+            r"i am (\w+)"
+        ]
+        
+        import re
+        transcript_lower = transcript.lower()
+        
+        for pattern in name_patterns:
+            match = re.search(pattern, transcript_lower)
+            if match:
+                name = match.group(1).capitalize()
+                response = await self.agentic_speaker_system.handle_name_learning(name, session_id)
+                logger.info(f"Learned name from transcript: {name}")
+                return response
+                
+        return None
 
 # Initialize orchestrator
 orchestrator = VoiceOrchestrator()
@@ -478,16 +495,34 @@ async def ultra_fast_stream(request: TranscriptRequest):
             
             logger.info(f"Ultra-Fast-Stream: Processing complete sentence: {cleaned_sentence}")
         
-        # 2. NEW: Speaker identification if audio data provided
+        # 2. ENHANCED: Magical speaker recognition with 5-second buffering
         speaker_context = ""
+        name_learning_response = None
+        
         if request.audio_data and orchestrator.memory_enabled:
             try:
                 audio_bytes = base64.b64decode(request.audio_data)
-                speaker_info = await orchestrator.identify_speaker(audio_bytes, request.session_id)
-                speaker_context = speaker_info["greeting"]
-                logger.info(f"Speaker identified: {speaker_info['name']} (new: {speaker_info['is_new']})")
+                speaker_result = await orchestrator.accumulate_speaker_audio(audio_bytes, request.session_id)
+                
+                if speaker_result.get("status") == "accumulating":
+                    # Still buffering - show progress
+                    progress = speaker_result.get("progress", 0)
+                    duration = speaker_result.get("buffer_duration", 0)
+                    logger.info(f"🎤 Accumulating audio: {duration:.1f}s ({progress:.1%} complete)")
+                elif speaker_result.get("status") in ["identified", "registered", "uncertain"]:
+                    # Speaker recognition completed
+                    speaker_context = speaker_result.get("greeting", "")
+                    if speaker_result.get("is_magical"):
+                        logger.info(f"🎭 MAGICAL RECOGNITION: {speaker_result['name']} ({speaker_result['confidence']:.2f})")
+                    else:
+                        logger.info(f"Speaker result: {speaker_result['name']} (status: {speaker_result['status']})")
+                        
             except Exception as e:
-                logger.warning(f"Speaker identification failed: {e}")
+                logger.warning(f"Speaker recognition failed: {e}")
+        
+        # 3. Check for name learning in transcript
+        if orchestrator.agentic_speaker_system:
+            name_learning_response = await orchestrator.handle_name_learning(cleaned_sentence, request.session_id)
         
         # 3. Real-time streaming with speaker-aware prompting
         async def realtime_sentence_stream():
@@ -515,8 +550,16 @@ async def ultra_fast_stream(request: TranscriptRequest):
                 sentence_count = 0
                 full_response = ""
                 
-                # NEW: Prepend speaker greeting to the response context
-                effective_prompt = f"{speaker_context}{cleaned_sentence}" if speaker_context else cleaned_sentence
+                # ENHANCED: Handle name learning and speaker context
+                if name_learning_response:
+                    # Speaker told us their name - use personalized response
+                    effective_prompt = f"{name_learning_response}How can I help you?"
+                elif speaker_context:
+                    # Use speaker greeting context
+                    effective_prompt = f"{speaker_context}{cleaned_sentence}"
+                else:
+                    # Default prompt
+                    effective_prompt = cleaned_sentence
                 
                 # Start streaming LLM tokens and process in real-time
                 async for token in orchestrator.stream_llm_tokens(effective_prompt, context):
