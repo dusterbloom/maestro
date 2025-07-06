@@ -548,7 +548,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
         playerRef.current.cleanup();
       }
       
-      // Clear magical speaker recognition buffers
+      // Clear definitive speaker recognition buffers
       lastRecordedAudioRef.current = null;
       audioChunksRef.current = [];
       speakerProgressRef.current = 0;
