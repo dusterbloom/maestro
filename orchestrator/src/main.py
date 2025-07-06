@@ -233,6 +233,37 @@ class RealtimeTokenBuffer:
             
         return None
 
+from enum import Enum
+
+class ConversationState(Enum):
+    GREETING = "GREETING"
+    ENROLLING = "ENROLLING"
+    CONFIRMING_ENROLLMENT = "CONFIRMING_ENROLLMENT"
+    RECOGNIZED = "RECOGNIZED"
+    INCOGNITO = "INCOGNITO"
+
+class ConversationManager:
+    def __init__(self):
+        self.sessions = {}
+
+    def get_state(self, session_id: str) -> ConversationState:
+        return self.sessions.get(session_id, {"state": ConversationState.GREETING})["state"]
+
+    def set_state(self, session_id: str, state: ConversationState):
+        if session_id not in self.sessions:
+            self.sessions[session_id] = {}
+        self.sessions[session_id]["state"] = state
+
+    def get_session_data(self, session_id: str) -> dict:
+        return self.sessions.get(session_id, {})
+
+    def set_session_data(self, session_id: str, data: dict):
+        if session_id not in self.sessions:
+            self.sessions[session_id] = {}
+        self.sessions[session_id].update(data)
+
+conversation_manager = ConversationManager()
+
 class VoiceOrchestrator:
     def __init__(self):
         self.whisper_host = config.WHISPER_URL.split("://")[1].split(":")[0]
@@ -643,240 +674,139 @@ async def interrupt_tts_endpoint(request: InterruptRequest):
 
 @app.post("/ultra-fast-stream")
 async def ultra_fast_stream(request: TranscriptRequest):
-    """🚀 REAL-TIME STREAMING with Speaker Identification"""
-    try:
-        start_time = time.time()
-        
-        logger.info(f"🚀 Ultra-Fast-Stream: {request.transcript} (session: {request.session_id})")
-        
-        # 1. Sentence completion detection (same logic as before)
-        transcript_words = request.transcript.strip().split()
-        is_likely_interruption = (
-            len(transcript_words) <= 2 and  # Very short input
-            len(request.transcript.strip()) <= 15  # Short character count
-        )
-        
-        if is_likely_interruption:
-            # For short inputs that might be interruptions, apply minimal validation
-            cleaned_sentence = request.transcript.strip()
-            if len(cleaned_sentence) < 3:  # Skip very short inputs like "a", "I", "oh", "um"
-                logger.info(f"Ultra-Fast-Stream: Input too short, skipping: {request.transcript}")
-                
-                async def empty_stream():
-                    yield b""  # Empty binary response
-                
-                return StreamingResponse(
-                    empty_stream(),
-                    media_type="audio/wav",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "Access-Control-Allow-Origin": "*"
-                    }
-                )
-            logger.info(f"Ultra-Fast-Stream: Processing likely interruption: {cleaned_sentence}")
-        else:
-            # For longer inputs, use normal sentence completion detection
-            is_complete, cleaned_sentence = orchestrator.sentence_detector.is_sentence_complete(request.transcript, request.session_id)
-            
-            if not is_complete:
-                logger.info(f"Ultra-Fast-Stream: Sentence not complete, skipping: {request.transcript}")
-                
-                async def empty_stream():
-                    yield b""  # Empty binary response
-                
-                return StreamingResponse(
-                    empty_stream(),
-                    media_type="audio/wav",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "Access-Control-Allow-Origin": "*"
-                    }
-                )
-            
-            logger.info(f"Ultra-Fast-Stream: Processing complete sentence: {cleaned_sentence}")
-        
-        # 2. PASSIVE: Just capture audio chunks in background (non-blocking)
-        if request.audio_data and orchestrator.memory_enabled:
-            # Fire-and-forget: accumulate audio passively
-            audio_bytes = base64.b64decode(request.audio_data)
-            asyncio.create_task(orchestrator.passively_accumulate_speaker_audio(audio_bytes, request.session_id))
-        
-        # 3. Get existing speaker context (if any)
-        speaker_context = ""
-        cached_speaker_info = orchestrator.get_session_speaker_info(request.session_id)
-        if cached_speaker_info:
-            speaker_context = cached_speaker_info.get("greeting", "")
-        
-        # 4. Check for name learning in transcript
-        name_learning_response = None
-        if orchestrator.agentic_speaker_system:
-            name_learning_response = await orchestrator.handle_name_learning(cleaned_sentence, request.session_id)
-        
-        # 3. Real-time streaming with speaker-aware prompting
-        async def realtime_sentence_stream():
-            """Stream individual sentence audio with speaker awareness"""
-            # Create an abort flag for this session
-            from threading import Event
-            abort_flag = Event()
-            orchestrator.active_tts_sessions[request.session_id] = {"abort_flag": abort_flag}
-            
-            try:
-                # Initialize session history if not exists
-                if request.session_id not in orchestrator.session_history:
-                    orchestrator.session_history[request.session_id] = []
-                
-                # Build context-aware prompt with speaker greeting
-                history = orchestrator.session_history[request.session_id]
-                context = ""
-                if history:
-                    # Include recent conversation turns
-                    recent_exchanges = []
-                    for exchange in history[-3:]:
-                        recent_exchanges.append(f"User: {exchange['user']}")
-                        recent_exchanges.append(f"Assistant: {exchange['assistant']}")
-                    context = "\n".join(recent_exchanges) + "\n"
-                
-                logger.info("🚀 Starting real-time token streaming with sentence buffering...")
-                
-                # Initialize token buffer for sentence detection
-                token_buffer = RealtimeTokenBuffer(min_chars=15, max_buffer_time=2.0)
-                sentence_count = 0
-                full_response = ""
-                
-                # ENHANCED: Handle name learning and speaker context
-                if name_learning_response:
-                    # Speaker told us their name - use personalized response
-                    effective_prompt = f"{name_learning_response}How can I help you?"
-                elif speaker_context:
-                    # Add speaker context to system context, not user prompt
-                    # This tells the LLM who they're talking to
-                    context = f"[SPEAKER CONTEXT: {speaker_context.strip()}]\n{context}"
-                    effective_prompt = cleaned_sentence
-                    logger.info(f"🎭 Added speaker context to LLM: {speaker_context.strip()}")
-                else:
-                    # Default prompt
-                    effective_prompt = cleaned_sentence
-                
-                # Start streaming LLM tokens and process in real-time
-                async for token in orchestrator.stream_llm_tokens(effective_prompt, context):
-                    if abort_flag.is_set():
-                        logger.info(f"TTS stream for {request.session_id} aborted by interrupt.")
-                        break
-                    
-                    full_response += token
-                    
-                    # Feed token to buffer and check for sentence fragment
-                    sentence_fragment = token_buffer.feed(token)
-                    
-                    if sentence_fragment:
-                        # Skip fragments that are just dots/ellipsis or very short
-                        stripped_fragment = sentence_fragment.strip()
-                        if (stripped_fragment in ['...', '....', '.....', '..', '.', '', '?', '!', ',', ';'] or 
-                            len(stripped_fragment) <= 1):
-                            logger.info(f"🔍 Skipping short/punctuation fragment: '{stripped_fragment}'")
-                            continue
-                            
-                        sentence_count += 1
-                        logger.info(f"📝 Sentence {sentence_count}: {sentence_fragment[:50]}...")
-                        
-                        # Generate TTS for this sentence fragment immediately
-                        try:
-                            audio_data = await orchestrator.synthesize(sentence_fragment)
-                            
-                            if audio_data and len(audio_data) > 0:
-                                # Convert to base64 for JSON streaming
-                                audio_b64 = base64.b64encode(audio_data).decode()
-                                
-                                # Stream as Server-Sent Event
-                                event_data = {
-                                    'type': 'sentence_audio',
-                                    'sequence': sentence_count,
-                                    'text': sentence_fragment,
-                                    'audio_data': audio_b64,
-                                    'size_bytes': len(audio_data)
-                                }
-                                yield f"data: {json.dumps(event_data)}\n\n"
-                                
-                                logger.info(f"🎵 Streamed sentence {sentence_count} audio ({len(audio_data)} bytes)")
-                            else:
-                                logger.warning(f"⚠️ No audio generated for sentence {sentence_count}")
-                                
-                        except Exception as e:
-                            logger.error(f"TTS error for sentence {sentence_count}: {e}")
-                
-                # Handle any remaining buffer content
-                final_fragment = token_buffer.flush()
-                if final_fragment:
-                    # Skip final fragments that are just dots/ellipsis or very short
-                    stripped_fragment = final_fragment.strip()
-                    if (stripped_fragment in ['...', '....', '.....', '..', '.', '', '?', '!', ',', ';'] or 
-                        len(stripped_fragment) <= 1):
-                        logger.info(f"🔍 Skipping short/punctuation fragment: '{stripped_fragment}'")
-                    else:
-                        sentence_count += 1
-                        logger.info(f"📝 Final sentence {sentence_count}: {final_fragment[:50]}...")
-                        
-                        try:
-                            audio_data = await orchestrator.synthesize(final_fragment)
-                            
-                            if audio_data and len(audio_data) > 0:
-                                audio_b64 = base64.b64encode(audio_data).decode()
-                                
-                                event_data = {
-                                    'type': 'sentence_audio',
-                                    'sequence': sentence_count,
-                                    'text': final_fragment,
-                                    'audio_data': audio_b64,
-                                    'size_bytes': len(audio_data)
-                                }
-                                yield f"data: {json.dumps(event_data)}\n\n"
-                                
-                                logger.info(f"🎵 Streamed final sentence {sentence_count} audio ({len(audio_data)} bytes)")
-                        except Exception as e:
-                            logger.error(f"TTS error for final sentence: {e}")
-                
-                # Store conversation in session history
-                if full_response:
-                    exchange = {"user": cleaned_sentence, "assistant": full_response}
-                    orchestrator.session_history[request.session_id].append(exchange)
-                    
-                    # Keep session history reasonable
-                    if len(orchestrator.session_history[request.session_id]) > 10:
-                        orchestrator.session_history[request.session_id] = orchestrator.session_history[request.session_id][-10:]
-                
-                # Send completion event
-                completion_data = {
-                    'type': 'complete',
-                    'total_sentences': sentence_count,
-                    'full_text': full_response
-                }
-                yield f"data: {json.dumps(completion_data)}\n\n"
-                
-                logger.info(f"🎉 Real-time streaming complete! {sentence_count} sentences")
-                
-            except Exception as e:
-                logger.error(f"Real-time streaming error: {e}")
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-            finally:
-                # Clean up the session from active_tts_sessions
-                orchestrator.cleanup_completed_session(request.session_id)
-        
-        return StreamingResponse(
-            realtime_sentence_stream(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "Cache-Control"
-            }
-        )
-        
-    except Exception as e:
-        logger.error(f"Ultra-fast-stream error: {e}")
-        return {"error": str(e)}, 500
+    """🚀 REAL-TIME STREAMING with State Machine"""
+    session_id = request.session_id
+    transcript = request.transcript
+    audio_data = request.audio_data
+
+    state = conversation_manager.get_state(session_id)
+
+    if transcript.lower().strip() == "musica maestro":
+        conversation_manager.set_state(session_id, ConversationState.INCOGNITO)
+        return JSONResponse({
+            "type": "system",
+            "message": "Entering incognito mode. No data will be saved."
+        })
+
+    if state == ConversationState.INCOGNITO:
+        # Handle incognito conversation
+        return await handle_incognito_conversation(transcript)
+
+    if state == ConversationState.GREETING:
+        # Handle initial interaction
+        return await handle_greeting(session_id, audio_data)
+
+    if state == ConversationState.ENROLLING:
+        return await handle_enrollment(session_id, audio_data)
+
+    if state == ConversationState.CONFIRMING_ENROLLMENT:
+        return await handle_enrollment_confirmation(session_id, transcript)
+
+    if state == ConversationState.RECOGNIZED:
+        return await handle_recognized_conversation(session_id, transcript)
+
+    # ... other states to be implemented
+    return JSONResponse({"error": "Invalid state"}, status_code=500)
+
+async def handle_recognized_conversation(session_id: str, transcript: str):
+    session_data = conversation_manager.get_session_data(session_id)
+    user_id = session_data.get("user_id")
+    # TODO: Load user context from memory
+    
+    response = await orchestrator.generate_response(transcript, context=f"User ID: {user_id}")
+    audio_data = await orchestrator.synthesize(response)
+    return StreamingResponse(io.BytesIO(audio_data), media_type="audio/wav")
+
+async def handle_incognito_conversation(transcript: str):
+    # Simplified conversation loop without memory
+    response = await orchestrator.generate_response(transcript)
+    audio_data = await orchestrator.synthesize(response)
+    return StreamingResponse(io.BytesIO(audio_data), media_type="audio/wav")
+
+async def handle_greeting(session_id: str, audio_data: str):
+    if not audio_data:
+        return JSONResponse({
+            "type": "audio_prompt",
+            "message": "I didn't hear anything. Please speak to start."
+        })
+
+    embedding = await orchestrator.voice_service.get_embedding(base64.b64decode(audio_data))
+    if not embedding:
+        return JSONResponse({"error": "Failed to generate embedding"}, status_code=500)
+
+    speaker_profile = await orchestrator.memory_service.find_speaker_by_embedding(embedding)
+
+    if speaker_profile:
+        conversation_manager.set_state(session_id, ConversationState.RECOGNIZED)
+        conversation_manager.set_session_data(session_id, {"user_id": speaker_profile})
+        # TODO: Load user context
+        return JSONResponse({
+            "type": "recognized_speaker",
+            "message": f"Welcome back, {speaker_profile}!" # Replace with actual name
+        })
+    else:
+        conversation_manager.set_state(session_id, ConversationState.ENROLLING)
+        conversation_manager.set_session_data(session_id, {"embeddings": [embedding], "enrollment_step": 1})
+        return JSONResponse({
+            "type": "enrollment_start",
+            "message": "I don't recognize your voice. To enroll, please repeat the following sentence three times: A quick brown fox jumped over the lazy dog."
+        })
+
+async def handle_enrollment(session_id: str, audio_data: str):
+    session_data = conversation_manager.get_session_data(session_id)
+    embeddings = session_data.get("embeddings", [])
+    step = session_data.get("enrollment_step", 1)
+
+    if not audio_data:
+        return JSONResponse({
+            "type": "audio_prompt",
+            "message": "I didn't hear you. Please repeat the sentence."
+        })
+
+    embedding = await orchestrator.voice_service.get_embedding(base64.b64decode(audio_data))
+    if not embedding:
+        return JSONResponse({"error": "Failed to generate embedding"}, status_code=500)
+
+    embeddings.append(embedding)
+    conversation_manager.set_session_data(session_id, {"embeddings": embeddings, "enrollment_step": step + 1})
+
+    if step < 3:
+        return JSONResponse({
+            "type": "enrollment_continue",
+            "message": f"Thank you. Please repeat the sentence {3 - step} more time(s)."
+        })
+    else:
+        conversation_manager.set_state(session_id, ConversationState.CONFIRMING_ENROLLMENT)
+        return JSONResponse({
+            "type": "enrollment_complete",
+            "message": "Thank you. I've recorded your voice. What name should I associate with it?"
+        })
+
+async def handle_enrollment_confirmation(session_id: str, transcript: str):
+    session_data = conversation_manager.get_session_data(session_id)
+    embeddings = session_data.get("embeddings", [])
+    name = transcript.strip()
+
+    if not name:
+        return JSONResponse({
+            "type": "audio_prompt",
+            "message": "I didn't catch that. Please tell me your name."
+        })
+
+    # Average the embeddings to create a single representative embedding
+    avg_embedding = np.mean(embeddings, axis=0).tolist()
+    user_id = await orchestrator.memory_service.create_speaker_profile(avg_embedding)
+    await orchestrator.memory_service.update_speaker_name(user_id, name)
+
+    conversation_manager.set_state(session_id, ConversationState.RECOGNIZED)
+    conversation_manager.set_session_data(session_id, {"user_id": user_id})
+
+    return JSONResponse({
+        "type": "enrollment_confirmed",
+        "message": f"Thank you, {name}! I'll remember you."
+    })
+
+
 
 @app.on_event("startup")
 async def startup_event():

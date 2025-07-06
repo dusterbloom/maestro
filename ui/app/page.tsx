@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DESIGN_TOKENS } from '../design-system';
 import VoiceButton from '@/components/VoiceButton';
 import StatusIndicator from '@/components/StatusIndicator';
@@ -10,6 +10,25 @@ export default function Home() {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'recording' | 'processing' | 'error'>('idle');
   const [error, setError] = useState<string>('');
   const [transcript, setTranscript] = useState<string>('');
+  const [sessionId, setSessionId] = useState<string>('');
+
+  useEffect(() => {
+    const startConversation = async () => {
+      try {
+        const response = await fetch('/api/start-conversation', { method: 'POST' });
+        const data = await response.json();
+        setSessionId(data.session_id);
+
+        const utterance = new SpeechSynthesisUtterance(data.greeting);
+        speechSynthesis.speak(utterance);
+      } catch (err) {
+        setError('Failed to start conversation.');
+        setStatus('error');
+      }
+    };
+
+    startConversation();
+  }, []);
 
   const handleTranscript = (newTranscript: string) => {
     setTranscript(newTranscript);
@@ -32,6 +51,7 @@ export default function Home() {
             onStatusChange={setStatus}
             onTranscript={handleTranscript}
             onError={setError}
+            sessionId={sessionId}
           />
           <Waveform isRecording={status === 'recording'} audioLevel={0.5} />
         </div>

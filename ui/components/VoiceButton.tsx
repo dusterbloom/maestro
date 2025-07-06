@@ -8,9 +8,10 @@ interface VoiceButtonProps {
   onStatusChange?: (status: 'idle' | 'connecting' | 'connected' | 'recording' | 'processing' | 'error') => void;
   onTranscript?: (transcript: string) => void;
   onError?: (error: string) => void;
+  sessionId?: string;
 }
 
-export default function VoiceButton({ onStatusChange, onTranscript, onError }: VoiceButtonProps) {
+export default function VoiceButton({ onStatusChange, onTranscript, onError, sessionId }: VoiceButtonProps) {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'recording' | 'processing' | 'error'>('idle');
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -18,7 +19,14 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
   const whisperWsRef = useRef<VoiceWebSocket | null>(null);
   const recorderRef = useRef<AudioRecorder | null>(null);
   const playerRef = useRef<AudioPlayer | null>(null);
-  const sessionIdRef = useRef<string>(`session_${Date.now()}`);
+  const sessionIdRef = useRef<string>(sessionId || `session_${Date.now()}`);
+
+  useEffect(() => {
+    if (sessionId) {
+      sessionIdRef.current = sessionId;
+    }
+  }, [sessionId]);
+
   
   // TTS interruption control
   const currentStreamControllerRef = useRef<AbortController | null>(null);
@@ -234,11 +242,10 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                 }
               }
               
-              const response = await fetch('/api/process-transcript', {
+              const response = await fetch('/api/ultra-fast-stream', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'X-Use-Streaming': 'true'  // Enable real-time streaming
                 },
                 body: JSON.stringify(requestBody),
                 signal: streamController.signal  // Add abort signal
