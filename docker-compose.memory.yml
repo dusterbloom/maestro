@@ -1,8 +1,27 @@
-# Memory components add-on for conversation persistence
+# Memory components add-on for conversation persistence and speaker identification
 services:
   orchestrator:
     environment:
       - MEMORY_ENABLED=true
+      - DIGLETT_URL=http://diglett:80
+      - CHROMADB_URL=http://chromadb:8002
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - diglett
+      - chromadb
+      - redis
+
+  diglett:
+    build:
+      context: ./diglett
+      dockerfile: Dockerfile
+    ports:
+      - "3210:80"
+    volumes:
+      - diglett-data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
 
   a-mem:
     image: agiresearch/a-mem:latest
@@ -39,3 +58,6 @@ services:
       - PERSIST_DIRECTORY=/chroma/chroma
       - ANONYMIZED_TELEMETRY=FALSE
     restart: unless-stopped
+
+volumes:
+  diglett-data:
