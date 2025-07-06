@@ -1,12 +1,12 @@
 import chromadb
 import redis.asyncio as redis
 import uuid
-from config import CHROMADB_URL, REDIS_URL
+from config import config
 
 class MemoryService:
     def __init__(self):
-        self.redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-        self.chroma_client = chromadb.HttpClient(host=CHROMADB_URL, port=8002) # Default ChromaDB port is 8000, but we mapped it to 8002
+        self.redis_client = redis.from_url(config.REDIS_URL, decode_responses=True)
+        self.chroma_client = chromadb.HttpClient(host=config.CHROMADB_URL, port=8002)
         self.collection = self.chroma_client.get_or_create_collection("speaker_embeddings")
 
     async def find_speaker_by_embedding(self, embedding: list[float]) -> str | None:
