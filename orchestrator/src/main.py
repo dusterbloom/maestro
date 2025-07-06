@@ -8,6 +8,7 @@ import re
 from typing import Optional
 import httpx
 import ollama
+import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from config import config
@@ -26,9 +27,9 @@ class VoiceOrchestrator:
         self.memory_service = MemoryService()
         self.ollama_client = ollama.AsyncClient(host=config.OLLAMA_URL)
         self.tts_client = httpx.AsyncClient(base_url=config.TTS_URL, timeout=config.TTS_TIMEOUT)
-        self.whisper_client = httpx.AsyncClient(base_url=config.WHISPER_URL, timeout=config.WHISPER_TIMEOUT)
         self.active_connections = {}
         self.session_states = {}
+        self.whisper_sessions = {}  # session_id -> whisper websocket
 
     async def handle_connection(self, websocket: WebSocket, session_id: str):
         await websocket.accept()
@@ -44,24 +45,108 @@ class VoiceOrchestrator:
                 elif event == "speaker.claim":
                     await self.handle_speaker_claim(session_id, data.get("user_id"), data.get("new_name"))
         except WebSocketDisconnect:
+            # Cleanup WhisperLive WebSocket connection
+            if session_id in self.whisper_sessions:
+                try:
+                    await self.whisper_sessions[session_id].close()
+                except:
+                    pass
+                del self.whisper_sessions[session_id]
+            
             del self.active_connections[session_id]
             del self.session_states[session_id]
             logger.info(f"Session {session_id} disconnected.")
 
-    async def transcribe_audio(self, audio_data: bytes) -> str:
+    async def get_whisper_websocket(self, session_id: str):
+        """Get or create WhisperLive WebSocket connection for session"""
+        if session_id not in self.whisper_sessions:
+            try:
+                # WhisperLive WebSocket URL - simple and direct
+                whisper_ws_url = "ws://whisper-live:9090"
+                
+                # Connect to WhisperLive WebSocket
+                websocket = await websockets.connect(whisper_ws_url, timeout=10)
+                
+                # Send required configuration as first message (per WhisperLive protocol)
+                config_message = {
+                    "uid": session_id,
+                    "language": "en", 
+                    "task": "transcribe",
+                    "model": "tiny",
+                    "use_vad": True
+                }
+                
+                await websocket.send(json.dumps(config_message))
+                logger.info(f"WhisperLive WebSocket connected for session {session_id}")
+                
+                # Wait for SERVER_READY confirmation
+                try:
+                    response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                    logger.info(f"WhisperLive response: {response}")
+                except asyncio.TimeoutError:
+                    logger.warning("No SERVER_READY response from WhisperLive")
+                
+                self.whisper_sessions[session_id] = websocket
+                return websocket
+                
+            except Exception as e:
+                logger.error(f"Failed to connect to WhisperLive: {e}")
+                return None
+        
+        return self.whisper_sessions[session_id]
+
+    async def transcribe_audio_websocket(self, session_id: str, audio_data: bytes) -> str:
+        """Send audio to WhisperLive via WebSocket and return transcript"""
         try:
-            # WhisperLive expects WAV audio, so ensure the frontend sends WAV or convert here
-            # For now, assuming frontend sends compatible audio
-            response = await self.whisper_client.post(
-                "/asr", # Assuming WhisperLive has an ASR endpoint for direct audio
-                headers={'Content-Type': 'audio/wav'},
-                content=audio_data
-            )
-            response.raise_for_status()
-            return response.json().get("text", "").strip()
+            websocket = await self.get_whisper_websocket(session_id)
+            if not websocket:
+                return ""
+            
+            # Send audio data directly to WhisperLive
+            # For now, try sending the WAV data as-is to see what happens
+            await websocket.send(audio_data)
+            logger.info(f"Sent {len(audio_data)} bytes to WhisperLive for session {session_id}")
+            
+            # Listen for transcript response with longer timeout
+            try:
+                response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+                logger.info(f"WhisperLive response: {response}")
+                
+                if isinstance(response, str):
+                    message = json.loads(response)
+                    
+                    # Check for segments in response
+                    if message.get("segments"):
+                        transcript = ""
+                        for segment in message["segments"]:
+                            if segment.get("text"):
+                                transcript += segment["text"] + " "
+                        if transcript.strip():
+                            logger.info(f"Extracted transcript: {transcript.strip()}")
+                            return transcript.strip()
+                    
+                    # Check for other transcript fields
+                    if message.get("text"):
+                        logger.info(f"Found text field: {message['text']}")
+                        return message["text"].strip()
+                        
+                return ""
+                
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout waiting for WhisperLive response for session {session_id}")
+                return ""
+                
         except Exception as e:
             logger.error(f"WhisperLive transcription error: {e}")
+            # Remove broken connection
+            if session_id in self.whisper_sessions:
+                try:
+                    await self.whisper_sessions[session_id].close()
+                except:
+                    pass
+                del self.whisper_sessions[session_id]
             return ""
+
 
     async def synthesize_speech(self, text: str) -> bytes:
         try:
@@ -87,7 +172,7 @@ class VoiceOrchestrator:
         audio_data = base64.b64decode(audio_base64)
         
         # 1. Transcribe audio
-        transcript = await self.transcribe_audio(audio_data)
+        transcript = await self.transcribe_audio_websocket(session_id, audio_data)
         if not transcript:
             logger.warning(f"No transcript generated for session {session_id}")
             return

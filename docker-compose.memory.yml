@@ -5,7 +5,7 @@ services:
     environment:
       - MEMORY_ENABLED=true
       - DIGLETT_URL=http://diglett:80
-      - CHROMADB_URL=http://chromadb:8002
+      - CHROMADB_URL=http://chromadb:8000
       - REDIS_URL=redis://redis:6379
       - WHISPER_URL=${WHISPER_URL:-http://whisper-live:9090}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
@@ -50,10 +50,8 @@ services:
     ports:
       - "8002:8000"
     volumes:
-      - ./data/chromadb:/chroma/chroma
+      - ./data/chromadb:/data
     environment:
-      - IS_PERSISTENT=TRUE
-      - PERSIST_DIRECTORY=/chroma/chroma
       - ANONYMIZED_TELEMETRY=FALSE
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]

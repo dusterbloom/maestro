@@ -16,8 +16,11 @@ class MemoryService:
 
         for i in range(max_retries):
             try:
-                self.chroma_client = chromadb.HttpClient(host=config.CHROMADB_URL, port=8002)
-                # Attempt to get a collection to verify connection
+                # Use official ChromaDB client syntax per docs
+                self.chroma_client = chromadb.HttpClient(host="chromadb", port=8000)
+                # Test connection with heartbeat
+                self.chroma_client.heartbeat()
+                # Create collection for speaker embeddings
                 self.collection = self.chroma_client.get_or_create_collection("speaker_embeddings")
                 print(f"Successfully connected to ChromaDB after {i+1} attempts.")
                 return

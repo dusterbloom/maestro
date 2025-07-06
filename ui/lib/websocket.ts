@@ -7,7 +7,8 @@ export class VoiceWebSocket {
   private onErrorCallback?: (error: string) => void;
   private onSpeakerIdentifiedCallback?: (data: { user_id: string; name: string; status?: string }) => void;
   private onSpeakerRenamedCallback?: (data: { user_id: string; new_name: string }) => void;
-  private onAssistantSpeakCallback?: (data: { text: string }) => void;
+  private onAssistantSpeakCallback?: (data: { text: string; audio_data?: string }) => void;
+  private onTranscriptCallback?: (data: { text: string }) => void;
 
   constructor(private url: string) {
     this.sessionId = `session_${Date.now()}`;
@@ -107,8 +108,12 @@ export class VoiceWebSocket {
     this.onSpeakerRenamedCallback = callback;
   }
 
-  onAssistantSpeak(callback: (data: { text: string }) => void) {
+  onAssistantSpeak(callback: (data: { text: string; audio_data?: string }) => void) {
     this.onAssistantSpeakCallback = callback;
+  }
+
+  onTranscript(callback: (data: { text: string }) => void) {
+    this.onTranscriptCallback = callback;
   }
 
   private arrayBufferToBase64(buffer: ArrayBuffer): string {

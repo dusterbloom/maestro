@@ -1,0 +1,7 @@
+# Test dependencies for speaker embedding pipeline tests
+requests>=2.31.0
+websockets>=11.0.2
+numpy>=1.24.0
+redis>=4.5.0
+chromadb>=0.4.0
+asyncio-mqtt>=0.13.0
