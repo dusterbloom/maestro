@@ -153,28 +153,39 @@ class AgenticSpeakerSystem:
         return context
     
     async def handle_name_learning(self, name: str, session_id: str):
-        """Handle when speaker tells us their name"""
+        """Handle when speaker tells us their name - store in ChromaDB and Redis"""
         try:
-            # Update speaker name
+            # Update speaker name in voice service
             success = await self.voice_service.update_speaker_name(name)
             
             if success:
                 logger.info(f"Learned speaker name: {name}")
                 
-                # Store name learning event
+                # Store speaker in persistent storage
                 if self.memory_service:
                     registered_speaker = self.voice_service.get_registered_speaker()
                     if registered_speaker:
+                        # Store embedding in ChromaDB for future recognition
+                        speaker_embedding = self.voice_service.registered_speaker["embedding"]
+                        await self.memory_service.create_speaker_profile(speaker_embedding)
+                        
+                        # Update name in Redis
+                        await self.memory_service.update_speaker_name(registered_speaker["user_id"], name)
+                        
+                        # Store name learning event
                         memory_data = {
                             "event_type": "name_learned",
                             "user_id": registered_speaker["user_id"],
                             "name": name,
                             "timestamp": asyncio.get_event_loop().time(),
-                            "session_id": session_id
+                            "session_id": session_id,
+                            "stored_in_chromadb": True
                         }
                         await self.memory_service.add_user_memory(registered_speaker["user_id"], memory_data)
+                        
+                        logger.info(f"✅ Stored {name}'s voice embedding in ChromaDB and Redis")
                 
-                return f"Nice to meet you, {name}! I'll remember your voice. "
+                return f"Nice to meet you, {name}! I'll remember your voice for next time. "
             else:
                 return "I'm sorry, I couldn't update your name right now. "
                 
