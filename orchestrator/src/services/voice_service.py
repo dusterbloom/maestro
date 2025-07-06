@@ -1,9 +1,9 @@
 import httpx
-from config import DIGLETT_URL
+from config import config
 
 class VoiceService:
     def __init__(self):
-        self.client = httpx.AsyncClient(base_url=DIGLETT_URL, timeout=10.0)
+        self.client = httpx.AsyncClient(base_url=config.DIGLETT_URL, timeout=10.0)
 
     async def get_embedding(self, audio_data: bytes) -> list[float] | None:
         try:
