@@ -92,10 +92,10 @@ class AudioBufferManager:
             voice_active_samples = self._extract_voice_segments(float_array, threshold=vad_threshold)
             
             if len(voice_active_samples) == 0:
-                print("⚠️ No voice activity detected in audio buffer")
+                logger.warning("⚠️ No voice activity detected in audio buffer")
                 return b""
             
-            print(f"🎤 VAD filtering: {len(float_array)} -> {len(voice_active_samples)} samples ({len(voice_active_samples)/len(float_array)*100:.1f}% retained)")
+            logger.info(f"🎤 VAD filtering: {len(float_array)} -> {len(voice_active_samples)} samples ({len(voice_active_samples)/len(float_array)*100:.1f}% retained)")
             float_array = voice_active_samples
         
         # Convert to int16 PCM
@@ -250,7 +250,7 @@ class VoiceService:
             try:
                 await handler(event)
             except Exception as e:
-                print(f"Event handler error for {event.event_type}: {e}")
+                logger.error(f"Event handler error for {event.event_type}: {e}")
     
     async def accumulate_audio_chunk(self, audio_chunk: bytes, session_id: str) -> Optional[Dict]:
         """Accumulate audio chunk and check for speaker when 10 seconds reached"""
@@ -289,7 +289,7 @@ class VoiceService:
             }
             
         except Exception as e:
-            print(f"Error accumulating audio: {e}")
+            logger.error(f"Error accumulating audio: {e}")
             return None
     
     async def _identify_or_register_speaker_definitively(self, embedding: List[float], session_id: str) -> Dict:
@@ -342,7 +342,7 @@ class VoiceService:
                 return result
                 
         except Exception as e:
-            print(f"Error in definitive speaker identification: {e}")
+            logger.error(f"Error in definitive speaker identification: {e}")
             return {"status": "error", "message": str(e)}
     
     async def _register_new_speaker_to_storage(self, embedding: List[float], session_id: str) -> Dict:
@@ -384,7 +384,7 @@ class VoiceService:
             }
             
         except Exception as e:
-            print(f"Error registering new speaker: {e}")
+            logger.error(f"Error registering new speaker: {e}")
             return {"status": "error", "message": str(e)}
 
     async def _identify_or_register_speaker(self, embedding: List[float], session_id: str) -> Dict:
@@ -471,7 +471,7 @@ class VoiceService:
                 }
                 
         except Exception as e:
-            print(f"Error in speaker identification: {e}")
+            logger.error(f"Error in speaker identification: {e}")
             return {"status": "error", "message": str(e)}
     
     def _calculate_similarity(self, embedding1: List[float], embedding2: List[float]) -> float:
@@ -498,7 +498,7 @@ class VoiceService:
         """Update the registered speaker's name"""
         if self.registered_speaker:
             self.registered_speaker["name"] = name
-            print(f"Updated speaker name to: {name}")
+            logger.info(f"Updated speaker name to: {name}")
             return True
         return False
     
@@ -515,7 +515,7 @@ class VoiceService:
     def clear_registered_speaker(self):
         """Clear registered speaker (for testing/reset)"""
         self.registered_speaker = None
-        print("Cleared registered speaker")
+        logger.info("Cleared registered speaker")
 
     async def get_embedding(self, audio_data: bytes) -> list[float] | None:
         """Get embedding using Resemblyzer from WAV audio data"""
