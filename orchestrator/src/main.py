@@ -523,12 +523,12 @@ async def ultra_fast_stream(request: TranscriptRequest):
                     # Still buffering - show progress
                     progress = speaker_result.get("progress", 0)
                     duration = speaker_result.get("buffer_duration", 0)
-                    logger.info(f"🎤 Accumulating audio: {duration:.1f}s ({progress:.1%} complete)")
-                elif speaker_result.get("status") in ["identified", "registered", "uncertain"]:
-                    # Speaker recognition completed
+                    logger.info(f"🎤 Accumulating audio: {duration:.1f}s / 10.0s ({progress:.1%} complete)")
+                elif speaker_result.get("status") in ["identified", "registered"]:
+                    # Speaker recognition completed definitively
                     speaker_context = speaker_result.get("greeting", "")
-                    if speaker_result.get("is_magical"):
-                        logger.info(f"🎭 MAGICAL RECOGNITION: {speaker_result['name']} ({speaker_result['confidence']:.2f})")
+                    if speaker_result.get("is_definitive"):
+                        logger.info(f"🎭 DEFINITIVE RECOGNITION: {speaker_result['name']} ({speaker_result.get('confidence', 1.0):.2f})")
                     else:
                         logger.info(f"Speaker result: {speaker_result['name']} (status: {speaker_result['status']})")
                         
