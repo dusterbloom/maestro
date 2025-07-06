@@ -30,45 +30,16 @@ export default function Home() {
         <div className="relative flex justify-center py-8">
           <VoiceButton
             onStatusChange={setStatus}
-            onAudioData={(audioData) => ws.current?.sendAudio(audioData)}
+            onTranscript={handleTranscript}
             onError={setError}
           />
           <Waveform isRecording={status === 'recording'} audioLevel={0.5} />
         </div>
 
-        {speaker && (
-          <div className="bg-white/70 rounded-lg p-4 backdrop-blur-sm border-blue-200">
-            <p className={DESIGN_TOKENS.accent}>Speaker:</p>
-            <p className="text-gray-700 italic">{speaker.name}</p>
-            {speaker.status === 'unclaimed' && (
-              <div className="mt-2">
-                <input
-                  type="text"
-                  placeholder="What should I call you?"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleClaimName(e.currentTarget.value);
-                      e.currentTarget.value = '';
-                    }
-                  }}
-                  className="border rounded p-1"
-                />
-              </div>
-            )}
-          </div>
-        )}
-
         {transcript && (
           <div className="bg-white/70 rounded-lg p-4 backdrop-blur-sm border border-blue-200">
             <p className={DESIGN_TOKENS.accent}>You said:</p>
             <p className="text-gray-700 italic">"{transcript}"</p>
-          </div>
-        )}
-
-        {assistantResponse && (
-          <div className="bg-white/70 rounded-lg p-4 backdrop-blur-sm border-blue-200">
-            <p className={DESIGN_TOKENS.accent}>Assistant:</p>
-            <p className="text-gray-700 italic">"{assistantResponse}"</p>
           </div>
         )}
 
