@@ -382,17 +382,17 @@ Key behaviors:
             return {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
             
         try:
-            # Use enhanced voice service with 5-second buffering
+            # Use enhanced voice service with 10-second buffering
             result = await self.voice_service.accumulate_audio_chunk(audio_data, session_id)
             
-            if result and result.get("status") in ["identified", "registered", "uncertain"]:
+            if result and result.get("status") in ["identified", "registered"]:
                 # Speaker recognition completed - get agentic context
-                if self.agentic_speaker_system and result.get("status") != "uncertain":
+                if self.agentic_speaker_system:
                     agentic_context = self.agentic_speaker_system.get_current_speaker_context()
                     if agentic_context:
                         result["greeting"] = agentic_context
                         
-                logger.info(f"🎭 Magical speaker recognition: {result}")
+                logger.info(f"🎭 DEFINITIVE speaker recognition: {result}")
                 
             return result or {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
             
