@@ -574,6 +574,7 @@ async def ultra_fast_stream(request: TranscriptRequest):
                     # This tells the LLM who they're talking to
                     context = f"[SPEAKER CONTEXT: {speaker_context.strip()}]\n{context}"
                     effective_prompt = cleaned_sentence
+                    logger.info(f"🎭 Added speaker context to LLM: {speaker_context.strip()}")
                 else:
                     # Default prompt
                     effective_prompt = cleaned_sentence
