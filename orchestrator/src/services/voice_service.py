@@ -81,7 +81,7 @@ class AudioBufferManager:
         
         if apply_vad:
             # Apply Voice Activity Detection to filter out silent parts
-            voice_active_samples = self._extract_voice_segments(float_array, vad_threshold)
+            voice_active_samples = self._extract_voice_segments(float_array, threshold=vad_threshold)
             
             if len(voice_active_samples) == 0:
                 print("⚠️ No voice activity detected in audio buffer")
