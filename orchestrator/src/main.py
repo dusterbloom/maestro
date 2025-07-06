@@ -748,9 +748,11 @@ async def ultra_fast_stream(request: TranscriptRequest):
                 # Handle any remaining buffer content
                 final_fragment = token_buffer.flush()
                 if final_fragment:
-                    # Skip final fragments that are just dots/ellipsis
-                    if final_fragment.strip() in ['...', '....', '.....', '..', '.', '']:
-                        logger.info(f"🔍 Skipping final ellipsis fragment: '{final_fragment.strip()}'")
+                    # Skip final fragments that are just dots/ellipsis or very short
+                    stripped_fragment = final_fragment.strip()
+                    if (stripped_fragment in ['...', '....', '.....', '..', '.', '', '?', '!', ',', ';'] or 
+                        len(stripped_fragment) <= 1):
+                        logger.info(f"🔍 Skipping short/punctuation fragment: '{stripped_fragment}'")
                     else:
                         sentence_count += 1
                         logger.info(f"📝 Final sentence {sentence_count}: {final_fragment[:50]}...")
