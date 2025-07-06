@@ -8,9 +8,12 @@ services:
       - CHROMADB_URL=http://chromadb:8002
       - REDIS_URL=redis://redis:6379
     depends_on:
-      - diglett
-      - chromadb
-      - redis
+      diglett:
+        condition: service_started
+      chromadb:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   diglett:
     build:
