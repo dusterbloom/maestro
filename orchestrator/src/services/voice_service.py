@@ -95,6 +95,7 @@ class AudioBufferManager:
         """Clear buffer and reset timing"""
         self.audio_buffer.clear()
         self.buffer_start_time = None
+        self.last_audio_time = None
     
     def get_buffer_duration_seconds(self) -> float:
         """Get current buffer duration in seconds"""
