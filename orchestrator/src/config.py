@@ -44,6 +44,7 @@ class Config:
     AMEM_TIMEOUT: float = float(os.getenv("AMEM_TIMEOUT", "5.0"))
     OLLAMA_TIMEOUT: float = float(os.getenv("OLLAMA_TIMEOUT", "30.0"))
     TTS_TIMEOUT: float = float(os.getenv("TTS_TIMEOUT", "10.0"))
+    WHISPER_TIMEOUT: float = float(os.getenv("WHISPER_TIMEOUT", "10.0"))
     
     # WhisperLive Settings
     NO_SPEECH_THRESHOLD: float = float(os.getenv("NO_SPEECH_THRESHOLD", "0.45"))
