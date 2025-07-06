@@ -427,37 +427,24 @@ Key behaviors:
                 logger.info(f"🎤 Session {session_id} started accumulating audio")
             
             if buffer_ready:
-                # We have 10 seconds! Perform definitive speaker identification
-                logger.info(f"🎯 Session {session_id} reached 10 seconds - performing definitive identification")
+                # We have 10 seconds! Start non-blocking speaker identification
+                logger.info(f"🎯 Session {session_id} reached 10 seconds - starting background identification")
                 
-                # Get WAV format audio for Diglett
-                wav_bytes = buffer_manager.get_buffer_as_wav()
+                # Mark as processing to avoid duplicate runs
+                self.session_speaker_states[session_id] = {"status": "processing"}
                 
-                # Get embedding from Diglett
-                embedding = await self.voice_service.get_embedding(wav_bytes)
-                if not embedding:
-                    logger.error(f"Failed to get embedding for session {session_id}")
-                    return {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
+                # Start background task for speaker identification (non-blocking)
+                asyncio.create_task(self._perform_background_speaker_identification(session_id, buffer_manager))
                 
-                # Perform definitive identification
-                result = await self.voice_service._identify_or_register_speaker_definitively(embedding, session_id)
-                
-                # Store result in session state to avoid re-identification
-                self.session_speaker_states[session_id] = {
-                    "status": "identified",
-                    "speaker_info": result
+                # Return immediately - don't block the conversation
+                return {
+                    "status": "processing",
+                    "message": "Speaker identification running in background",
+                    "user_id": "guest", 
+                    "name": "Friend", 
+                    "is_new": False, 
+                    "greeting": ""
                 }
-                
-                # Get agentic context
-                if self.agentic_speaker_system and result.get("status") in ["identified", "registered"]:
-                    agentic_context = self.agentic_speaker_system.get_current_speaker_context()
-                    if agentic_context:
-                        result["greeting"] = agentic_context
-                        # Update cached result
-                        self.session_speaker_states[session_id]["speaker_info"] = result
-                
-                logger.info(f"🎭 DEFINITIVE speaker recognition completed for session {session_id}: {result}")
-                return result
             
             else:
                 # Still accumulating - return progress
