@@ -510,7 +510,7 @@ async def ultra_fast_stream(request: TranscriptRequest):
             
             logger.info(f"Ultra-Fast-Stream: Processing complete sentence: {cleaned_sentence}")
         
-        # 2. ENHANCED: Magical speaker recognition with 5-second buffering
+        # 2. ENHANCED: Definitive speaker recognition with 10-second buffering
         speaker_context = ""
         name_learning_response = None
         
