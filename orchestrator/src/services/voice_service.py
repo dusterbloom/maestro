@@ -3,6 +3,8 @@ import asyncio
 import numpy as np
 import time
 import hashlib
+import io
+import wave
 from collections import deque
 from typing import Optional, Dict, List
 from dataclasses import dataclass, asdict
