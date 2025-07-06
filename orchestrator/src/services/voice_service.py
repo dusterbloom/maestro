@@ -1,5 +1,5 @@
 import httpx
-from ..config import DIGLETT_URL
+from config import DIGLETT_URL
 
 class VoiceService:
     def __init__(self):
