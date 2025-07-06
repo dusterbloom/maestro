@@ -193,6 +193,7 @@ async def health():
 @app.on_event("startup")
 async def startup_event():
     logger.info("Voice Orchestrator v2.0 starting up...")
+    await orchestrator.memory_service.initialize_chroma_client()
 
 if __name__ == "__main__":
     import uvicorn
