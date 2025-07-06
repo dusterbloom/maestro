@@ -29,7 +29,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
   const audioQueueRef = useRef<Array<{sequence: number, audioData: string, text: string}>>([]);
   const nextToPlayRef = useRef<number>(1);
   
-  // ENHANCED: Store audio chunks for magical speaker recognition (5-second buffering)
+  // ENHANCED: Store audio chunks for definitive speaker recognition (10-second buffering)
   const lastRecordedAudioRef = useRef<ArrayBuffer | null>(null);
   const audioChunksRef = useRef<Float32Array[]>([]);
   const speakerProgressRef = useRef<number>(0);
