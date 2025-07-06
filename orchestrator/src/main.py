@@ -370,6 +370,17 @@ Key behaviors:
             logger.error(f"LLM streaming error: {e}")
             yield ""
 
+    def interrupt_tts(self, session_id: str) -> bool:
+        """Interrupt active TTS streaming for a session"""
+        if session_id in self.active_tts_sessions:
+            session_info = self.active_tts_sessions[session_id]
+            if "abort_flag" in session_info and not session_info["abort_flag"].is_set():
+                session_info["abort_flag"].set()
+                logger.info(f"🛑 TTS for session {session_id} interrupted.")
+                return True
+        logger.warning(f"No active TTS session found to interrupt for session_id: {session_id}")
+        return False
+
     def cleanup_completed_session(self, session_id: str):
         """Clean up a completed session including speaker recognition data"""
         try:
@@ -579,6 +590,23 @@ async def health():
         "timestamp": time.time()
     })
 
+@app.post("/start-conversation")
+async def start_conversation():
+    """Starts a new conversation and returns a session ID and greeting"""
+    session_id = f"session_{uuid.uuid4().hex}"
+    greeting = "Hello! I am Maestro, your personal voice assistant. How can I help you today?"
+    
+    # Initialize session state
+    orchestrator.sentence_detector.reset_session(session_id)
+    orchestrator.session_history[session_id] = []
+    orchestrator.session_speaker_states[session_id] = {"status": "not_started"}
+    
+    return JSONResponse({
+        "session_id": session_id,
+        "greeting": greeting
+    })
+
+
 @app.get("/whisper-info")
 async def whisper_info():
     """Get WhisperLive connection info"""
@@ -591,6 +619,27 @@ class TranscriptRequest(BaseModel):
     transcript: str
     session_id: str = "default"
     audio_data: Optional[str] = None  # NEW: base64 encoded audio for speaker identification
+
+class InterruptRequest(BaseModel):
+    session_id: str
+
+@app.post("/interrupt-tts")
+async def interrupt_tts_endpoint(request: InterruptRequest):
+    """Endpoint to interrupt TTS playback for a given session"""
+    logger.info(f"Received interrupt request for session: {request.session_id}")
+    
+    try:
+        # Call the orchestrator's interrupt method
+        success = orchestrator.interrupt_tts(request.session_id)
+        
+        if success:
+            return JSONResponse({"status": "interrupted", "session_id": request.session_id})
+        else:
+            return JSONResponse({"status": "not_found", "session_id": request.session_id}, status_code=404)
+            
+    except Exception as e:
+        logger.error(f"Error interrupting TTS for session {request.session_id}: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 @app.post("/ultra-fast-stream")
 async def ultra_fast_stream(request: TranscriptRequest):
@@ -668,6 +717,11 @@ async def ultra_fast_stream(request: TranscriptRequest):
         # 3. Real-time streaming with speaker-aware prompting
         async def realtime_sentence_stream():
             """Stream individual sentence audio with speaker awareness"""
+            # Create an abort flag for this session
+            from threading import Event
+            abort_flag = Event()
+            orchestrator.active_tts_sessions[request.session_id] = {"abort_flag": abort_flag}
+            
             try:
                 # Initialize session history if not exists
                 if request.session_id not in orchestrator.session_history:
@@ -707,6 +761,10 @@ async def ultra_fast_stream(request: TranscriptRequest):
                 
                 # Start streaming LLM tokens and process in real-time
                 async for token in orchestrator.stream_llm_tokens(effective_prompt, context):
+                    if abort_flag.is_set():
+                        logger.info(f"TTS stream for {request.session_id} aborted by interrupt.")
+                        break
+                    
                     full_response += token
                     
                     # Feed token to buffer and check for sentence fragment
@@ -801,6 +859,9 @@ async def ultra_fast_stream(request: TranscriptRequest):
             except Exception as e:
                 logger.error(f"Real-time streaming error: {e}")
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            finally:
+                # Clean up the session from active_tts_sessions
+                orchestrator.cleanup_completed_session(request.session_id)
         
         return StreamingResponse(
             realtime_sentence_stream(),

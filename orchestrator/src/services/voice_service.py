@@ -325,24 +325,76 @@ class VoiceService:
                         "greeting": f"Welcome back, {self.registered_speaker['name']}! "
                     }
                 else:
-                    # Different speaker - register as new user
-                    await self._register_new_speaker_to_storage(embedding, session_id)
-                    return {
-                        "status": "registered",
-                        "user_id": "new_speaker",
-                        "name": "Friend",
-                        "confidence": 1.0,
-                        "is_new": True,
-                        "is_definitive": True,
-                        "greeting": "Hello! I don't recognize your voice. What should I call you? "
-                    }
+                    # Low confidence - query all known speakers from storage
+                    return await self._query_and_identify_speaker(embedding, session_id)
             else:
-                # No registered speaker - register this one definitively
-                result = await self._register_new_speaker_to_storage(embedding, session_id)
-                return result
+                # No speaker registered locally, try to find one in storage
+                return await self._query_and_identify_speaker(embedding, session_id)
                 
         except Exception as e:
             logger.error(f"Error in definitive speaker identification: {e}")
+            return {"status": "error", "message": str(e)}
+    
+    async def _query_and_identify_speaker(self, embedding: List[float], session_id: str) -> Dict:
+        """Query ChromaDB for all known speakers and identify the best match"""
+        try:
+            # This requires memory service to be available
+            if not self.memory_service:
+                # Fallback to registering if no memory service
+                return await self._register_new_speaker_to_storage(embedding, session_id)
+
+            all_speakers = await self.memory_service.get_all_speaker_profiles()
+            
+            if not all_speakers:
+                # No speakers in DB, register this one
+                return await self._register_new_speaker_to_storage(embedding, session_id)
+
+            best_match = None
+            highest_confidence = 0.0
+
+            for speaker in all_speakers:
+                confidence = self._calculate_similarity(embedding, speaker["embedding"])
+                if confidence > highest_confidence:
+                    highest_confidence = confidence
+                    best_match = speaker
+
+            if highest_confidence >= self.confidence_threshold:
+                # Found a definitive match in the database
+                user_id = best_match["user_id"]
+                name = best_match["name"]
+                
+                # Update local registry for faster subsequent checks
+                self.registered_speaker = {
+                    "user_id": user_id,
+                    "name": name,
+                    "embedding": best_match["embedding"],
+                    "confidence_threshold": self.confidence_threshold
+                }
+
+                event = SpeakerEvent(
+                    event_type="speaker_identified",
+                    user_id=user_id,
+                    confidence=highest_confidence,
+                    timestamp=datetime.utcnow().isoformat(),
+                    audio_hash=hashlib.md5(str(embedding).encode()).hexdigest()[:8],
+                    session_id=session_id,
+                    context={"name": name, "recognition_type": "definitive_db_match"}
+                )
+                await self.emit_speaker_event(event)
+
+                return {
+                    "status": "identified",
+                    "user_id": user_id,
+                    "name": name,
+                    "confidence": highest_confidence,
+                    "is_definitive": True
+                }
+            else:
+                # No match found, register as a new speaker
+                return await self._register_new_speaker_to_storage(embedding, session_id)
+
+        except Exception as e:
+            logger.error(f"Error querying and identifying speaker: {e}")
             return {"status": "error", "message": str(e)}
     
     async def _register_new_speaker_to_storage(self, embedding: List[float], session_id: str) -> Dict:

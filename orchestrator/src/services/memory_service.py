@@ -53,6 +53,32 @@ class MemoryService:
     async def update_speaker_name(self, user_id: str, name: str):
         await self.redis_client.hset(f"speaker:{user_id}", "name", name)
         await self.redis_client.hset(f"speaker:{user_id}", "status", "active")
+
+    async def get_all_speaker_profiles(self) -> list[dict]:
+        """Fetch all speaker profiles from ChromaDB and Redis"""
+        try:
+            # Get all embeddings from ChromaDB
+            results = self.collection.get(include=["embeddings", "metadatas"])
+            
+            if not results or not results["ids"]:
+                return []
+
+            profiles = []
+            for i, user_id in enumerate(results["ids"]):
+                embedding = results["embeddings"][i]
+                # Fetch name from Redis
+                profile_data = await self.get_speaker_profile(user_id)
+                name = profile_data.get("name", "Friend")
+                
+                profiles.append({
+                    "user_id": user_id,
+                    "name": name,
+                    "embedding": embedding
+                })
+            return profiles
+        except Exception as e:
+            print(f"Error getting all speaker profiles: {e}")
+            return []
     
     async def add_user_memory(self, user_id: str, memory_data: dict):
         """Add memory data to user's profile"""
