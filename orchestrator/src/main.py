@@ -261,8 +261,15 @@ class VoiceOrchestrator:
             self.memory_service = None
             self.agentic_speaker_system = None
             
-        # Track audio chunks for 10-second accumulation
-        self.session_audio_chunks = {}  # session_id -> list of audio chunks
+        # Track session-persistent audio accumulation for speaker recognition
+        self.session_audio_buffers = {}  # session_id -> AudioBufferManager
+        self.session_speaker_states = {}  # session_id -> {"status": str, "speaker_info": dict}
+        
+        # Session speaker recognition states:
+        # - "not_started": No audio accumulated yet
+        # - "accumulating": Collecting 10 seconds of audio
+        # - "identified": Speaker identified, no more accumulation needed
+        # - "completed": Session complete
 
     async def generate_response(self, text: str, context: str = "") -> str:
         """Generate response using Ollama with streaming"""
