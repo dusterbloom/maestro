@@ -12,7 +12,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from config import config
-from services.voice_service import VoiceService
+from services.voice_service import VoiceService, AudioBufferManager
 from services.memory_service import MemoryService
 from services.speaker_events import AgenticSpeakerSystem
 
