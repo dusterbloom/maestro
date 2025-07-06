@@ -11,3 +11,4 @@ spacy
 ollama
 chromadb
 redis
+resemblyzer
