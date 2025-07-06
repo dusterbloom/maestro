@@ -37,9 +37,13 @@ class AudioBufferManager:
         self.last_audio_time = None
         
     def add_audio_chunk(self, audio_chunk: np.ndarray) -> bool:
-        """Add audio chunk to buffer. Returns True if buffer is ready (5+ seconds)"""
+        """Add audio chunk to buffer. Returns True if buffer is ready (10+ seconds)"""
+        current_time = time.time()
+        
         if self.buffer_start_time is None:
-            self.buffer_start_time = time.time()
+            self.buffer_start_time = current_time
+        
+        self.last_audio_time = current_time
             
         # Add samples to buffer
         for sample in audio_chunk:
@@ -50,6 +54,12 @@ class AudioBufferManager:
         duration_seconds = current_samples / self.sample_rate
         
         return duration_seconds >= (self.buffer_duration_ms / 1000)
+    
+    def is_timed_out(self) -> bool:
+        """Check if buffer has timed out (no audio for timeout_seconds)"""
+        if self.last_audio_time is None:
+            return False
+        return (time.time() - self.last_audio_time) > self.timeout_seconds
     
     def get_buffer_as_bytes(self) -> bytes:
         """Get current buffer as int16 PCM bytes for Diglett"""
