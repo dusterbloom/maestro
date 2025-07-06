@@ -261,7 +261,7 @@ class VoiceOrchestrator:
             self.memory_service = None
             self.agentic_speaker_system = None
             
-        # Track audio chunks for 5-second accumulation
+        # Track audio chunks for 10-second accumulation
         self.session_audio_chunks = {}  # session_id -> list of audio chunks
 
     async def generate_response(self, text: str, context: str = "") -> str:
