@@ -34,7 +34,7 @@ Thumbs.db
 *.log
 
 # Gemini
-.gemini/
+.gemini/settings.json
 
 # Roo Code
 .roo/mcp.json
