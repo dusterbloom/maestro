@@ -25,9 +25,20 @@ async def create_embedding(file: UploadFile = File(...)):
     try:
         audio_data = await file.read()
         signal, fs = torchaudio.load(audio_data)
+        
+        # Calculate average dB level
+        audio_rms = torch.sqrt(torch.mean(signal ** 2))
+        avg_db = 20 * torch.log10(audio_rms + 1e-8).item()  # Add small epsilon to avoid log(0)
+        
         with torch.no_grad():
             embedding = classifier.encode_batch(signal)[0][0]
-        return {"speaker_embedding": embedding.tolist()}
+        
+        # Return format matching what VoiceService expects
+        return {
+            "speaker_name": "Unknown",  # Default name - will be learned later
+            "speaker_embedding": embedding.tolist(),
+            "avg_db": avg_db
+        }
     except Exception as e:
         logger.error(f"Error creating embedding: {e}")
         return {"error": str(e)}, 500
