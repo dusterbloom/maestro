@@ -110,6 +110,14 @@ class AudioBufferManager:
                                pad_duration_ms: int = None) -> np.ndarray:
         """Extract voice-active segments from audio using simple energy-based VAD"""
         
+        # Use config defaults if not specified
+        if threshold is None:
+            threshold = config.SPEAKER_VAD_THRESHOLD
+        if min_segment_duration_ms is None:
+            min_segment_duration_ms = config.SPEAKER_VAD_MIN_SEGMENT_MS
+        if pad_duration_ms is None:
+            pad_duration_ms = config.SPEAKER_VAD_PAD_MS
+        
         # Calculate energy in sliding window
         window_size = int(self.sample_rate * 0.025)  # 25ms window
         hop_size = int(self.sample_rate * 0.010)     # 10ms hop
