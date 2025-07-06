@@ -6,17 +6,20 @@ import VoiceButton from '@/components/VoiceButton';
 import StatusIndicator from '@/components/StatusIndicator';
 import Waveform from '@/components/Waveform';
 import { VoiceWebSocket } from '@/lib/websocket';
+import { AudioPlayer } from '@/lib/audio';
 
 export default function Home() {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'recording' | 'processing' | 'error'>('idle');
   const [error, setError] = useState<string>('');
-  const [lastTranscript, setLastTranscript] = useState<string>('');
   const [speaker, setSpeaker] = useState<{ userId: string; name: string; status?: string } | null>(null);
   const [assistantResponse, setAssistantResponse] = useState<string>('');
+  const [transcript, setTranscript] = useState<string>('');
   const ws = useRef<VoiceWebSocket | null>(null);
+  const player = useRef<AudioPlayer | null>(null);
 
   useEffect(() => {
     ws.current = new VoiceWebSocket("ws://localhost:8000/ws/v1/voice");
+    player.current = new AudioPlayer();
 
     ws.current.onConnect(() => setStatus('connected'));
     ws.current.onDisconnect(() => setStatus('idle'));
@@ -33,14 +36,23 @@ export default function Home() {
       setSpeaker((prev) => (prev ? { ...prev, name: data.new_name, status: 'active' } : null));
     });
 
-    ws.current.onAssistantSpeak((data) => {
+    ws.current.onAssistantSpeak(async (data) => {
       setAssistantResponse(data.text);
+      if (data.audio_data) {
+        const audioBytes = Uint8Array.from(atob(data.audio_data), c => c.charCodeAt(0));
+        await player.current?.play(audioBytes.buffer);
+      }
+    });
+
+    ws.current.onTranscript((data) => {
+      setTranscript(data.text);
     });
 
     ws.current.connect();
 
     return () => {
       ws.current?.disconnect();
+      player.current?.cleanup();
     };
   }, []);
 
@@ -90,6 +102,13 @@ export default function Home() {
                 />
               </div>
             )}
+          </div>
+        )}
+
+        {transcript && (
+          <div className="bg-white/70 rounded-lg p-4 backdrop-blur-sm border border-blue-200">
+            <p className={DESIGN_TOKENS.accent}>You said:</p>
+            <p className="text-gray-700 italic">"{transcript}"</p>
           </div>
         )}
 
