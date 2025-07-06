@@ -213,11 +213,25 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
               
               // Include audio data if available for speaker identification
               if (lastRecordedAudioRef.current) {
-                // Convert ArrayBuffer to base64
-                const audioBytes = new Uint8Array(lastRecordedAudioRef.current);
-                const audioBase64 = btoa(String.fromCharCode(...audioBytes));
-                requestBody.audio_data = audioBase64;
-                console.log('🎭 Including 10-second audio buffer for definitive speaker recognition');
+                try {
+                  // Convert ArrayBuffer to base64 safely for large buffers
+                  const audioBytes = new Uint8Array(lastRecordedAudioRef.current);
+                  
+                  // Use chunks to avoid "Maximum call stack size exceeded" error
+                  let binary = '';
+                  const chunkSize = 8192;
+                  for (let i = 0; i < audioBytes.length; i += chunkSize) {
+                    const chunk = audioBytes.slice(i, i + chunkSize);
+                    binary += String.fromCharCode.apply(null, Array.from(chunk));
+                  }
+                  
+                  const audioBase64 = btoa(binary);
+                  requestBody.audio_data = audioBase64;
+                  console.log('🎭 Including 10-second audio buffer for definitive speaker recognition');
+                } catch (error) {
+                  console.warn('Failed to include audio data:', error);
+                  // Continue without audio data
+                }
               }
               
               const response = await fetch('/api/process-transcript', {
