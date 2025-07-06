@@ -8,9 +8,9 @@ import re
 from typing import Optional
 import httpx
 import ollama
-import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 from config import config
 from services.voice_service import VoiceService
 from services.memory_service import MemoryService
@@ -19,266 +19,627 @@ from services.memory_service import MemoryService
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Voice Orchestrator", version="2.0.0")
+app = FastAPI(title="Voice Orchestrator", version="1.0.0")
+
+class SentenceCompletionDetector:
+    """Lightweight sentence completion detection using pattern analysis"""
+    
+    def __init__(self):
+        # Patterns that indicate sentence completion
+        self.sentence_endings = re.compile(r'[.!?]+\s*$')
+        self.ellipsis_pattern = re.compile(r'\.{3,}\s*$')  # ... indicates continuation
+        
+        # Words that typically don't end sentences
+        self.continuation_words = {
+            'and', 'but', 'or', 'so', 'then', 'when', 'where', 'how', 'why', 'what', 'who',
+            'the', 'a', 'an', 'this', 'that', 'these', 'those', 'my', 'your', 'his', 'her',
+            'with', 'without', 'for', 'from', 'to', 'of', 'in', 'on', 'at', 'by'
+        }
+        
+        # Track conversation state per session
+        self.session_states = {}  # session_id -> {processed_sentences: set, last_processed: str}
+    
+    def is_sentence_complete(self, text: str, session_id: str = "default") -> tuple[bool, str]:
+        """
+        Determine if a sentence is complete and ready for processing
+        Returns: (is_complete, cleaned_sentence)
+        """
+        if not text or not text.strip():
+            return False, ""
+            
+        cleaned = text.strip()
+        
+        # Initialize session state if not exists
+        if session_id not in self.session_states:
+            self.session_states[session_id] = {
+                'processed_sentences': set(),
+                'last_processed': ""
+            }
+        
+        session_state = self.session_states[session_id]
+        
+        # Extract the latest sentence from the text (handles multi-sentence concatenated inputs)
+        sentences = re.split(r'[.!?]+', cleaned)
+        if not sentences:
+            return False, ""
+            
+        # Get the last non-empty sentence
+        last_sentence = ""
+        for sentence in reversed(sentences):
+            sentence = sentence.strip()
+            if sentence and len(sentence.split()) >= 2:  # Must have at least 2 words
+                last_sentence = sentence
+                break
+        
+        if not last_sentence:
+            return False, ""
+        
+        # Check if this specific sentence was already processed
+        if last_sentence in session_state['processed_sentences']:
+            logger.info(f"Sentence already processed in session {session_id}: {last_sentence}")
+            return False, ""
+        
+        # Reconstruct sentence with punctuation for validation
+        full_sentence = last_sentence
+        if not self.sentence_endings.search(cleaned):
+            # If the original text ends with punctuation, add it to the sentence
+            for ending in ['.', '!', '?']:
+                if cleaned.endswith(ending):
+                    full_sentence = last_sentence + ending
+                    break
+            else:
+                # No sentence ending found
+                return False, ""
+        else:
+            # Find the punctuation that belongs to this sentence
+            remaining_text = cleaned[cleaned.rfind(last_sentence):]
+            punctuation_match = self.sentence_endings.search(remaining_text)
+            if punctuation_match:
+                full_sentence = last_sentence + punctuation_match.group()
+        
+        # Check for ellipsis (indicates incomplete thought)
+        if self.ellipsis_pattern.search(full_sentence):
+            return False, ""
+        
+        # Check if last word suggests continuation
+        words = last_sentence.split()
+        if words:
+            last_word = words[-1].lower().rstrip('.,!?')
+            if last_word in self.continuation_words:
+                return False, ""
+        
+        # Additional heuristics for completeness
+        # Allow single meaningful words that end with punctuation (story., yes., okay., etc.)
+        if len(words) < config.MIN_WORD_COUNT:
+            if len(words) == 1 and len(words[0]) >= 3 and self.sentence_endings.search(full_sentence):
+                # Single word with punctuation and at least 3 characters is valid
+                pass  
+            else:
+                return False, ""
+        
+        # Mark as processed and return complete
+        session_state['processed_sentences'].add(last_sentence)
+        session_state['last_processed'] = last_sentence
+        logger.info(f"Processing new sentence in session {session_id}: {last_sentence}")
+        return True, full_sentence
+    
+    def reset_session(self, session_id: str = "default"):
+        """Reset state for specific conversation session"""
+        if session_id in self.session_states:
+            del self.session_states[session_id]
+            logger.info(f"Reset session state for {session_id}")
+
+class RealtimeTokenBuffer:
+    """
+    Token streaming buffer with sentence boundary detection (RealtimeTTS pattern)
+    Buffers LLM tokens and yields sentence fragments when ready for TTS
+    """
+    
+    def __init__(self, min_chars: int = 15, max_buffer_time: float = 2.0):
+        # Buffering thresholds
+        self.min_chars = min_chars  # Minimum chars before considering sentence
+        self.max_buffer_time = max_buffer_time  # Force output after this many seconds
+        
+        # Sentence boundary patterns (real sentence endings only)
+        self.sentence_endings = re.compile(r'[.!?](?![.])\s*')  # Don't match if followed by more dots (ellipsis)
+        self.ellipsis_pattern = re.compile(r'\.{2,}')  # Match ellipsis (2 or more dots)
+        self.continuation_words = {
+            'and', 'but', 'or', 'so', 'then', 'when', 'where', 'how', 'why', 
+            'what', 'who', 'the', 'a', 'an', 'this', 'that', 'these', 'those',
+            'with', 'without', 'for', 'from', 'to', 'of', 'in', 'on', 'at', 'by',
+            'however', 'although', 'because', 'since', 'while', 'if', 'unless'
+        }
+        
+        # Buffer state
+        self.buffer = ""
+        self.last_fragment_time = time.time()
+        
+    def feed(self, token: str) -> str | None:
+        """
+        Feed a token into the buffer (like RealtimeTTS .feed() method)
+        Returns sentence fragment if ready for TTS, None if still buffering
+        """
+        # Replace ellipsis with natural pauses as tokens arrive
+        if "..." in token:
+            token = token.replace("...", ", ")
+        elif ".." in token:
+            token = token.replace("..", ", ")
+            
+        self.buffer += token
+        
+        # Check if we should yield a sentence fragment
+        fragment = self._check_for_fragment()
+        if fragment:
+            self.buffer = self.buffer[len(fragment):].strip()
+            self.last_fragment_time = time.time()
+            return fragment.strip()
+            
+        # Force output if buffer timeout exceeded
+        current_time = time.time()
+        if (current_time - self.last_fragment_time > self.max_buffer_time and 
+            len(self.buffer.strip()) >= self.min_chars):
+            fragment = self.buffer.strip()
+            # Also clean any remaining ellipsis in forced output
+            fragment = self.ellipsis_pattern.sub(', ', fragment)
+            self.buffer = ""
+            self.last_fragment_time = current_time
+            return fragment
+            
+        return None
+    
+    def flush(self) -> str | None:
+        """Get remaining buffer content as final fragment"""
+        if self.buffer.strip():
+            fragment = self.buffer.strip()
+            # Clean any remaining ellipsis in final fragment
+            fragment = self.ellipsis_pattern.sub(', ', fragment)
+            self.buffer = ""
+            return fragment
+        return None
+    
+    def _check_for_fragment(self) -> str | None:
+        """Check if current buffer contains a ready sentence fragment"""
+        if len(self.buffer.strip()) < self.min_chars:
+            return None
+        
+        # First, handle ellipsis as pauses - replace with comma for natural speech
+        if self.ellipsis_pattern.search(self.buffer):
+            # Replace ellipsis with comma and space for natural pause in TTS
+            cleaned_buffer = self.ellipsis_pattern.sub(', ', self.buffer)
+            # Update the buffer with cleaned version
+            self.buffer = cleaned_buffer
+            
+        # Look for real sentence endings (not ellipsis)
+        match = self.sentence_endings.search(self.buffer)
+        if match:
+            # Found sentence ending, check if it's a natural break
+            end_pos = match.end()
+            potential_fragment = self.buffer[:end_pos].strip()
+            remaining = self.buffer[end_pos:].strip()
+            
+            # Don't break if next word suggests continuation
+            if remaining:
+                next_words = remaining.split()
+                if next_words and next_words[0].lower() in self.continuation_words:
+                    return None
+                    
+            # Also check if the sentence ends with a continuation word
+            words = potential_fragment.split()
+            if words and words[-1].lower().rstrip('.,!?') in self.continuation_words:
+                return None
+                
+            return potential_fragment
+            
+        return None
 
 class VoiceOrchestrator:
     def __init__(self):
-        self.voice_service = VoiceService()
-        self.memory_service = MemoryService()
-        self.ollama_client = ollama.AsyncClient(host=config.OLLAMA_URL)
-        self.tts_client = httpx.AsyncClient(base_url=config.TTS_URL, timeout=config.TTS_TIMEOUT)
-        self.active_connections = {}
-        self.session_states = {}
-        self.whisper_sessions = {}  # session_id -> whisper websocket
-
-    async def handle_connection(self, websocket: WebSocket, session_id: str):
-        await websocket.accept()
-        self.active_connections[session_id] = websocket
-        self.session_states[session_id] = {"user_id": None, "status": "unidentified"}
-        logger.info(f"Session {session_id} connected.")
-        try:
-            while True:
-                data = await websocket.receive_json()
-                event = data.get("event")
-                if event == "audio_stream":
-                    await self.handle_audio_stream(session_id, data.get("audio_data"))
-                elif event == "speaker.claim":
-                    await self.handle_speaker_claim(session_id, data.get("user_id"), data.get("new_name"))
-        except WebSocketDisconnect:
-            # Cleanup WhisperLive WebSocket connection
-            if session_id in self.whisper_sessions:
-                try:
-                    await self.whisper_sessions[session_id].close()
-                except:
-                    pass
-                del self.whisper_sessions[session_id]
-            
-            del self.active_connections[session_id]
-            del self.session_states[session_id]
-            logger.info(f"Session {session_id} disconnected.")
-
-    async def get_whisper_websocket(self, session_id: str):
-        """Get or create WhisperLive WebSocket connection for session"""
-        if session_id not in self.whisper_sessions:
-            try:
-                # WhisperLive WebSocket URL - simple and direct
-                whisper_ws_url = "ws://whisper-live:9090"
-                
-                # Connect to WhisperLive WebSocket
-                websocket = await websockets.connect(whisper_ws_url, timeout=10)
-                
-                # Send required configuration as first message (per WhisperLive protocol)
-                config_message = {
-                    "uid": session_id,
-                    "language": "en", 
-                    "task": "transcribe",
-                    "model": "tiny",
-                    "use_vad": True
-                }
-                
-                await websocket.send(json.dumps(config_message))
-                logger.info(f"WhisperLive WebSocket connected for session {session_id}")
-                
-                # Wait for SERVER_READY confirmation
-                try:
-                    response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
-                    logger.info(f"WhisperLive response: {response}")
-                except asyncio.TimeoutError:
-                    logger.warning("No SERVER_READY response from WhisperLive")
-                
-                self.whisper_sessions[session_id] = websocket
-                return websocket
-                
-            except Exception as e:
-                logger.error(f"Failed to connect to WhisperLive: {e}")
-                return None
+        self.whisper_host = config.WHISPER_URL.split("://")[1].split(":")[0]
+        self.whisper_port = int(config.WHISPER_URL.split(":")[-1])
+        self.ollama_url = config.OLLAMA_URL
+        self.tts_url = config.TTS_URL
+        self.memory_enabled = config.MEMORY_ENABLED
         
-        return self.whisper_sessions[session_id]
+        # Initialize sentence completion detector
+        self.sentence_detector = SentenceCompletionDetector()
+        
+        # Simple session memory for conversation continuity
+        self.session_history = {}  # session_id -> list of {"user": str, "assistant": str}
+        
+        # Track active TTS sessions for interruption capability
+        self.active_tts_sessions = {}  # session_id -> {"thread": Thread, "queue": Queue, "abort_flag": Event}
+        
+        # Speaker embedding services (NEW)
+        if self.memory_enabled:
+            self.voice_service = VoiceService()
+            self.memory_service = MemoryService()
+        else:
+            self.voice_service = None
+            self.memory_service = None
 
-    async def transcribe_audio_websocket(self, session_id: str, audio_data: bytes) -> str:
-        """Send audio to WhisperLive via WebSocket and return transcript"""
+    async def generate_response(self, text: str, context: str = "") -> str:
+        """Generate response using Ollama with streaming"""
+        prompt = f"{context}\n\nUser: {text}\nAssistant:" if context else f"User: {text}\nAssistant:"
+        
         try:
-            websocket = await self.get_whisper_websocket(session_id)
-            if not websocket:
-                return ""
-            
-            # Send audio data directly to WhisperLive
-            # For now, try sending the WAV data as-is to see what happens
-            await websocket.send(audio_data)
-            logger.info(f"Sent {len(audio_data)} bytes to WhisperLive for session {session_id}")
-            
-            # Listen for transcript response with longer timeout
-            try:
-                response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
-                logger.info(f"WhisperLive response: {response}")
+            async with httpx.AsyncClient(timeout=config.OLLAMA_TIMEOUT) as client:
+                response = await client.post(
+                    f"{self.ollama_url}/api/generate",
+                    json={
+                        "model": config.LLM_MODEL,
+                        "prompt": prompt,
+                        "stream": True  # Enable real-time streaming
+                    }
+                )
+                response.raise_for_status()
                 
-                if isinstance(response, str):
-                    message = json.loads(response)
-                    
-                    # Check for segments in response
-                    if message.get("segments"):
-                        transcript = ""
-                        for segment in message["segments"]:
-                            if segment.get("text"):
-                                transcript += segment["text"] + " "
-                        if transcript.strip():
-                            logger.info(f"Extracted transcript: {transcript.strip()}")
-                            return transcript.strip()
-                    
-                    # Check for other transcript fields
-                    if message.get("text"):
-                        logger.info(f"Found text field: {message['text']}")
-                        return message["text"].strip()
-                        
-                return ""
-                
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout waiting for WhisperLive response for session {session_id}")
-                return ""
+                # Handle streaming NDJSON response
+                full_response = ""
+                async for line in response.aiter_lines():
+                    if line:
+                        chunk = json.loads(line)
+                        if chunk.get("response"):
+                            full_response += chunk["response"]
+                            # Optionally yield partial responses for real-time streaming
+                        if chunk.get("done"):
+                            break
+                return full_response.strip()
                 
         except Exception as e:
-            logger.error(f"WhisperLive transcription error: {e}")
-            # Remove broken connection
-            if session_id in self.whisper_sessions:
-                try:
-                    await self.whisper_sessions[session_id].close()
-                except:
-                    pass
-                del self.whisper_sessions[session_id]
-            return ""
-
-
-    async def synthesize_speech(self, text: str) -> bytes:
+            logger.error(f"LLM generation error: {e}")
+            return "I'm sorry, I couldn't process your request right now."
+    
+    async def synthesize(self, text: str) -> bytes:
+        """Convert text to speech using Kokoro TTS with optimized parameters"""
         try:
-            response = await self.tts_client.post(
-                "/v1/audio/speech",
-                json={
-                    "model": "kokoro",
-                    "input": text,
-                    "voice": config.TTS_VOICE,
-                    "response_format": "wav",
-                    "stream": False,
-                    "speed": config.TTS_SPEED,
-                    "volume_multiplier": config.TTS_VOLUME
-                }
-            )
-            response.raise_for_status()
-            return response.content
+            async with httpx.AsyncClient(timeout=config.OLLAMA_TIMEOUT) as client:
+                response = await client.post(
+                    f"{self.tts_url}/v1/audio/speech",  # Correct Kokoro endpoint
+                    json={
+                        "model": "kokoro",  # Required parameter from source
+                        "input": text,
+                        "voice": config.TTS_VOICE,
+                        "response_format": "wav",  # Keep WAV for non-streaming
+                        "stream": False,
+                        "speed": config.TTS_SPEED,
+                        "volume_multiplier": config.TTS_VOLUME
+                    }
+                )
+                response.raise_for_status()
+                return response.content
+                
         except Exception as e:
             logger.error(f"TTS synthesis error: {e}")
             return b""
 
-    async def handle_audio_stream(self, session_id: str, audio_base64: str):
-        audio_data = base64.b64decode(audio_base64)
+    async def stream_llm_tokens(self, text: str, context: str = ""):
+        """Stream LLM tokens using native ollama client for maximum performance"""
+        prompt = f"{context}\n\nUser: {text}\nAssistant:" if context else f"User: {text}\nAssistant:"
         
-        # 1. Transcribe audio
-        transcript = await self.transcribe_audio_websocket(session_id, audio_data)
-        if not transcript:
-            logger.warning(f"No transcript generated for session {session_id}")
-            return
-        await self.send_event(session_id, "transcript.update", {"text": transcript})
-
-        # 2. Speaker Identification
-        embedding = await self.voice_service.get_embedding(audio_data)
-        if not embedding:
-            logger.warning(f"No embedding generated for session {session_id}")
-            return
-
-        current_user_id = self.session_states[session_id]["user_id"]
-        profile = None
-
-        if current_user_id:
-            # User already identified in this session
-            profile = await self.memory_service.get_speaker_profile(current_user_id)
-        else:
-            # Try to find speaker by embedding
-            found_user_id = await self.memory_service.find_speaker_by_embedding(embedding)
-            if found_user_id:
-                profile = await self.memory_service.get_speaker_profile(found_user_id)
-                self.session_states[session_id]["user_id"] = found_user_id
-                self.session_states[session_id]["status"] = "identified"
-                await self.send_event(session_id, "speaker.identified", {"user_id": found_user_id, "name": profile.get("name", "Unknown")})
-            else:
-                # New speaker, create profile
-                new_user_id = await self.memory_service.create_speaker_profile(embedding)
-                profile = await self.memory_service.get_speaker_profile(new_user_id)
-                self.session_states[session_id]["user_id"] = new_user_id
-                self.session_states[session_id]["status"] = "pending_naming"
-                await self.send_event(session_id, "speaker.identified", {"user_id": new_user_id, "name": profile.get("name"), "status": "unclaimed"})
-                await self.initiate_naming_conversation(session_id, new_user_id, profile.get("name"))
-
-        # 3. LLM Processing and Response
-        llm_response_text = ""
-        if self.session_states[session_id]["status"] == "pending_naming":
-            # LLM extracts name from transcript
-            name_extraction_prompt = f"The user said: '{transcript}'. They are responding to a request for their name. Extract ONLY their name from this response. Respond with just the name, and nothing else."
-            extracted_name = await self.generate_llm_response(name_extraction_prompt)
-            if extracted_name and len(extracted_name.split()) <= 3: # Basic validation for name
-                await self.memory_service.update_speaker_name(self.session_states[session_id]["user_id"], extracted_name)
-                self.session_states[session_id]["status"] = "identified"
-                profile = await self.memory_service.get_speaker_profile(self.session_states[session_id]["user_id"])
-                await self.send_event(session_id, "speaker.renamed", {"user_id": profile["user_id"], "new_name": profile["name"]})
-                llm_response_text = await self.generate_llm_response(f"Confirm to the user, whose name is {profile['name']}, that you will remember their name.")
-            else:
-                llm_response_text = await self.generate_llm_response(f"I couldn't quite get your name from '{transcript}'. Could you please say it again?")
-        else:
-            # General conversation
-            llm_response_text = await self.generate_llm_response(transcript)
-
-        # 4. Synthesize and send audio response
-        if llm_response_text:
-            audio_response = await self.synthesize_speech(llm_response_text)
-            if audio_response:
-                await self.send_event(session_id, "assistant.speak", {"text": llm_response_text, "audio_data": base64.b64encode(audio_response).decode()})
-
-    async def initiate_naming_conversation(self, session_id: str, user_id: str, temp_name: str):
-        prompt = f"A new user, currently named '{temp_name}', has joined. Please ask them what you should call them. Be friendly and direct."
-        response = await self.generate_llm_response(prompt)
-        # Send only text, audio will be generated by handle_audio_stream after transcription
-        await self.send_event(session_id, "assistant.speak", {"text": response})
-
-    async def handle_speaker_claim(self, session_id: str, user_id: str, new_name: str):
-        await self.memory_service.update_speaker_name(user_id, new_name)
-        self.session_states[session_id]["status"] = "identified"
-        profile = await self.memory_service.get_speaker_profile(user_id)
-        await self.send_event(session_id, "speaker.renamed", {"user_id": user_id, "new_name": new_name})
-        prompt = f"The user has chosen the name '{new_name}'. Please confirm that you will remember it."
-        response = await self.generate_llm_response(prompt)
-        await self.send_event(session_id, "assistant.speak", {"text": response})
-
-    async def generate_llm_response(self, prompt: str) -> str:
         try:
-            response = await self.ollama_client.generate(
+            # Use native ollama streaming for best performance
+            client = ollama.AsyncClient(host=self.ollama_url)
+            stream = await client.generate(
                 model=config.LLM_MODEL,
                 prompt=prompt,
-                stream=False
+                stream=True,
+                options={
+                    "num_predict": config.LLM_MAX_TOKENS,  # Use configurable token limit
+                    "temperature": config.LLM_TEMPERATURE,
+                    "top_p": 0.8,
+                    "num_ctx": 2048,        # Increased context for better responses
+                }
             )
-            return response.get("response", "").strip()
+            
+            async for chunk in stream:
+                if chunk.get('response'):
+                    yield chunk['response']
+                if chunk.get('done'):
+                    break
+                    
         except Exception as e:
-            logger.error(f"LLM generation error: {e}")
-            return "I'm sorry, I'm having trouble communicating right now."
+            logger.error(f"LLM streaming error: {e}")
+            yield ""
 
-    async def send_event(self, session_id: str, event: str, data: dict):
-        if session_id in self.active_connections:
-            await self.active_connections[session_id].send_json({"event": event, "data": data})
+    def cleanup_completed_session(self, session_id: str):
+        """Clean up a completed TTS session"""
+        try:
+            if session_id in self.active_tts_sessions:
+                del self.active_tts_sessions[session_id]
+                logger.info(f"Cleaned up completed TTS session {session_id}")
+        except Exception as e:
+            logger.error(f"Error cleaning up session {session_id}: {e}")
 
-    async def send_error(self, session_id: str, message: str):
-        await self.send_event(session_id, "error", {"message": message})
+    # NEW: Speaker identification methods
+    async def identify_speaker(self, audio_data: bytes, session_id: str) -> dict:
+        """
+        Identify speaker from audio data and return speaker context
+        Returns: {"user_id": str, "name": str, "is_new": bool, "greeting": str}
+        """
+        if not self.memory_enabled or not self.voice_service:
+            return {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
+            
+        try:
+            # Generate voice embedding
+            embedding = await self.voice_service.get_embedding(audio_data)
+            if not embedding:
+                logger.warning("Could not generate voice embedding")
+                return {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
+            
+            # Try to find existing speaker
+            found_user_id = await self.memory_service.find_speaker_by_embedding(embedding)
+            
+            if found_user_id:
+                # Known speaker
+                profile = await self.memory_service.get_speaker_profile(found_user_id)
+                name = profile.get("name", "Speaker")
+                logger.info(f"Identified known speaker: {name} ({found_user_id})")
+                return {
+                    "user_id": found_user_id,
+                    "name": name,
+                    "is_new": False,
+                    "greeting": f"Hello {name}! "
+                }
+            else:
+                # New speaker - create profile
+                new_user_id = await self.memory_service.create_speaker_profile(embedding)
+                profile = await self.memory_service.get_speaker_profile(new_user_id)
+                temp_name = profile.get("name", "New Speaker")
+                logger.info(f"Created new speaker profile: {temp_name} ({new_user_id})")
+                return {
+                    "user_id": new_user_id,
+                    "name": temp_name,
+                    "is_new": True,
+                    "greeting": "Hello! I don't think we've met before. What should I call you? "
+                }
+                
+        except Exception as e:
+            logger.error(f"Speaker identification error: {e}")
+            return {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
 
+# Initialize orchestrator
 orchestrator = VoiceOrchestrator()
-
-@app.websocket("/ws/v1/voice/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    await orchestrator.handle_connection(websocket, session_id)
 
 @app.get("/health")
 async def health():
-    return JSONResponse({"status": "ok"})
+    """Health check endpoint"""
+    return JSONResponse({
+        "status": "ok", 
+        "memory_enabled": orchestrator.memory_enabled,
+        "timestamp": time.time()
+    })
+
+@app.get("/whisper-info")
+async def whisper_info():
+    """Get WhisperLive connection info"""
+    return {
+        "whisper_live_url": f"ws://{orchestrator.whisper_host}:{orchestrator.whisper_port}",
+        "message": "Connect frontend directly to WhisperLive, send transcripts to /process-transcript"
+    }
+
+class TranscriptRequest(BaseModel):
+    transcript: str
+    session_id: str = "default"
+    audio_data: Optional[str] = None  # NEW: base64 encoded audio for speaker identification
+
+@app.post("/ultra-fast-stream")
+async def ultra_fast_stream(request: TranscriptRequest):
+    """🚀 REAL-TIME STREAMING with Speaker Identification"""
+    try:
+        start_time = time.time()
+        
+        logger.info(f"🚀 Ultra-Fast-Stream: {request.transcript} (session: {request.session_id})")
+        
+        # 1. Sentence completion detection (same logic as before)
+        transcript_words = request.transcript.strip().split()
+        is_likely_interruption = (
+            len(transcript_words) <= 2 and  # Very short input
+            len(request.transcript.strip()) <= 15  # Short character count
+        )
+        
+        if is_likely_interruption:
+            # For short inputs that might be interruptions, apply minimal validation
+            cleaned_sentence = request.transcript.strip()
+            if len(cleaned_sentence) < 3:  # Skip very short inputs like "a", "I", "oh", "um"
+                logger.info(f"Ultra-Fast-Stream: Input too short, skipping: {request.transcript}")
+                
+                async def empty_stream():
+                    yield b""  # Empty binary response
+                
+                return StreamingResponse(
+                    empty_stream(),
+                    media_type="audio/wav",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Access-Control-Allow-Origin": "*"
+                    }
+                )
+            logger.info(f"Ultra-Fast-Stream: Processing likely interruption: {cleaned_sentence}")
+        else:
+            # For longer inputs, use normal sentence completion detection
+            is_complete, cleaned_sentence = orchestrator.sentence_detector.is_sentence_complete(request.transcript, request.session_id)
+            
+            if not is_complete:
+                logger.info(f"Ultra-Fast-Stream: Sentence not complete, skipping: {request.transcript}")
+                
+                async def empty_stream():
+                    yield b""  # Empty binary response
+                
+                return StreamingResponse(
+                    empty_stream(),
+                    media_type="audio/wav",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Access-Control-Allow-Origin": "*"
+                    }
+                )
+            
+            logger.info(f"Ultra-Fast-Stream: Processing complete sentence: {cleaned_sentence}")
+        
+        # 2. NEW: Speaker identification if audio data provided
+        speaker_context = ""
+        if request.audio_data and orchestrator.memory_enabled:
+            try:
+                audio_bytes = base64.b64decode(request.audio_data)
+                speaker_info = await orchestrator.identify_speaker(audio_bytes, request.session_id)
+                speaker_context = speaker_info["greeting"]
+                logger.info(f"Speaker identified: {speaker_info['name']} (new: {speaker_info['is_new']})")
+            except Exception as e:
+                logger.warning(f"Speaker identification failed: {e}")
+        
+        # 3. Real-time streaming with speaker-aware prompting
+        async def realtime_sentence_stream():
+            """Stream individual sentence audio with speaker awareness"""
+            try:
+                # Initialize session history if not exists
+                if request.session_id not in orchestrator.session_history:
+                    orchestrator.session_history[request.session_id] = []
+                
+                # Build context-aware prompt with speaker greeting
+                history = orchestrator.session_history[request.session_id]
+                context = ""
+                if history:
+                    # Include recent conversation turns
+                    recent_exchanges = []
+                    for exchange in history[-3:]:
+                        recent_exchanges.append(f"User: {exchange['user']}")
+                        recent_exchanges.append(f"Assistant: {exchange['assistant']}")
+                    context = "\n".join(recent_exchanges) + "\n"
+                
+                logger.info("🚀 Starting real-time token streaming with sentence buffering...")
+                
+                # Initialize token buffer for sentence detection
+                token_buffer = RealtimeTokenBuffer(min_chars=15, max_buffer_time=2.0)
+                sentence_count = 0
+                full_response = ""
+                
+                # NEW: Prepend speaker greeting to the response context
+                effective_prompt = f"{speaker_context}{cleaned_sentence}" if speaker_context else cleaned_sentence
+                
+                # Start streaming LLM tokens and process in real-time
+                async for token in orchestrator.stream_llm_tokens(effective_prompt, context):
+                    full_response += token
+                    
+                    # Feed token to buffer and check for sentence fragment
+                    sentence_fragment = token_buffer.feed(token)
+                    
+                    if sentence_fragment:
+                        # Skip fragments that are just dots/ellipsis
+                        if sentence_fragment.strip() in ['...', '....', '.....', '..', '.', '']:
+                            logger.info(f"🔍 Skipping ellipsis fragment: '{sentence_fragment.strip()}'")
+                            continue
+                            
+                        sentence_count += 1
+                        logger.info(f"📝 Sentence {sentence_count}: {sentence_fragment[:50]}...")
+                        
+                        # Generate TTS for this sentence fragment immediately
+                        try:
+                            audio_data = await orchestrator.synthesize(sentence_fragment)
+                            
+                            if audio_data and len(audio_data) > 0:
+                                # Convert to base64 for JSON streaming
+                                audio_b64 = base64.b64encode(audio_data).decode()
+                                
+                                # Stream as Server-Sent Event
+                                event_data = {
+                                    'type': 'sentence_audio',
+                                    'sequence': sentence_count,
+                                    'text': sentence_fragment,
+                                    'audio_data': audio_b64,
+                                    'size_bytes': len(audio_data)
+                                }
+                                yield f"data: {json.dumps(event_data)}\n\n"
+                                
+                                logger.info(f"🎵 Streamed sentence {sentence_count} audio ({len(audio_data)} bytes)")
+                            else:
+                                logger.warning(f"⚠️ No audio generated for sentence {sentence_count}")
+                                
+                        except Exception as e:
+                            logger.error(f"TTS error for sentence {sentence_count}: {e}")
+                
+                # Handle any remaining buffer content
+                final_fragment = token_buffer.flush()
+                if final_fragment:
+                    # Skip final fragments that are just dots/ellipsis
+                    if final_fragment.strip() in ['...', '....', '.....', '..', '.', '']:
+                        logger.info(f"🔍 Skipping final ellipsis fragment: '{final_fragment.strip()}'")
+                    else:
+                        sentence_count += 1
+                        logger.info(f"📝 Final sentence {sentence_count}: {final_fragment[:50]}...")
+                        
+                        try:
+                            audio_data = await orchestrator.synthesize(final_fragment)
+                            
+                            if audio_data and len(audio_data) > 0:
+                                audio_b64 = base64.b64encode(audio_data).decode()
+                                
+                                event_data = {
+                                    'type': 'sentence_audio',
+                                    'sequence': sentence_count,
+                                    'text': final_fragment,
+                                    'audio_data': audio_b64,
+                                    'size_bytes': len(audio_data)
+                                }
+                                yield f"data: {json.dumps(event_data)}\n\n"
+                                
+                                logger.info(f"🎵 Streamed final sentence {sentence_count} audio ({len(audio_data)} bytes)")
+                        except Exception as e:
+                            logger.error(f"TTS error for final sentence: {e}")
+                
+                # Store conversation in session history
+                if full_response:
+                    exchange = {"user": cleaned_sentence, "assistant": full_response}
+                    orchestrator.session_history[request.session_id].append(exchange)
+                    
+                    # Keep session history reasonable
+                    if len(orchestrator.session_history[request.session_id]) > 10:
+                        orchestrator.session_history[request.session_id] = orchestrator.session_history[request.session_id][-10:]
+                
+                # Send completion event
+                completion_data = {
+                    'type': 'complete',
+                    'total_sentences': sentence_count,
+                    'full_text': full_response
+                }
+                yield f"data: {json.dumps(completion_data)}\n\n"
+                
+                logger.info(f"🎉 Real-time streaming complete! {sentence_count} sentences")
+                
+            except Exception as e:
+                logger.error(f"Real-time streaming error: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        
+        return StreamingResponse(
+            realtime_sentence_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Cache-Control"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Ultra-fast-stream error: {e}")
+        return {"error": str(e)}, 500
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("Voice Orchestrator v2.0 starting up...")
-    await orchestrator.memory_service.initialize_chroma_client()
+    """Initialize services on startup"""
+    logger.info("Voice Orchestrator starting up...")
+    logger.info(f"Memory enabled: {orchestrator.memory_enabled}")
+    
+    # Initialize memory service if enabled
+    if orchestrator.memory_enabled and orchestrator.memory_service:
+        await orchestrator.memory_service.initialize_chroma_client()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up on shutdown"""
+    logger.info("Voice Orchestrator shutting down...")
 
 if __name__ == "__main__":
     import uvicorn
