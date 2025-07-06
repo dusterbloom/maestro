@@ -59,6 +59,26 @@ class AudioBufferManager:
         int16_array = (float_array * 32767).astype(np.int16)
         return int16_array.tobytes()
     
+    def get_buffer_as_wav(self) -> bytes:
+        """Get current buffer as WAV file bytes for Diglett"""
+        if not self.audio_buffer:
+            return b""
+            
+        # Convert float32 samples to int16 PCM
+        float_array = np.array(list(self.audio_buffer), dtype=np.float32)
+        int16_array = (float_array * 32767).astype(np.int16)
+        
+        # Create WAV file in memory
+        wav_buffer = io.BytesIO()
+        with wave.open(wav_buffer, 'wb') as wav_file:
+            wav_file.setnchannels(1)  # Mono
+            wav_file.setsampwidth(2)  # 16-bit
+            wav_file.setframerate(self.sample_rate)  # 16kHz
+            wav_file.writeframes(int16_array.tobytes())
+        
+        wav_buffer.seek(0)
+        return wav_buffer.read()
+    
     def clear_buffer(self):
         """Clear buffer and reset timing"""
         self.audio_buffer.clear()
