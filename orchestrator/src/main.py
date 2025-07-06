@@ -379,32 +379,89 @@ Key behaviors:
         except Exception as e:
             logger.error(f"Error cleaning up session {session_id}: {e}")
 
-    # ENHANCED: Definitive speaker identification with 10-second buffering
+    # ENHANCED: Session-persistent definitive speaker identification with 10-second buffering
     async def accumulate_speaker_audio(self, audio_data: bytes, session_id: str) -> dict:
         """
-        Accumulate audio for definitive speaker recognition after 10 seconds
-        Returns progress or speaker identification result
+        Session-persistent audio accumulation for definitive speaker recognition.
+        Accumulates across multiple utterances until 10 seconds reached, then identifies once.
         """
         if not self.memory_enabled or not self.voice_service:
             return {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
             
         try:
-            # Use enhanced voice service with 10-second buffering
-            result = await self.voice_service.accumulate_audio_chunk(audio_data, session_id)
+            # Check current session state
+            current_state = self.session_speaker_states.get(session_id, {"status": "not_started"})
             
-            if result and result.get("status") in ["identified", "registered"]:
-                # Speaker recognition completed - get agentic context
-                if self.agentic_speaker_system:
+            # If already identified, return cached result and skip accumulation
+            if current_state["status"] == "identified":
+                logger.debug(f"Speaker already identified for session {session_id}")
+                return current_state.get("speaker_info", {})
+            
+            # Get or create session audio buffer
+            if session_id not in self.session_audio_buffers:
+                self.session_audio_buffers[session_id] = AudioBufferManager()
+                logger.info(f"🎤 Started new audio accumulation for session {session_id}")
+            
+            buffer_manager = self.session_audio_buffers[session_id]
+            
+            # Convert audio bytes to float32 array and add to session buffer
+            import numpy as np
+            float_array = np.frombuffer(audio_data, dtype=np.float32)
+            buffer_ready = buffer_manager.add_audio_chunk(float_array)
+            
+            # Update session state to accumulating
+            if current_state["status"] == "not_started":
+                self.session_speaker_states[session_id] = {"status": "accumulating"}
+                logger.info(f"🎤 Session {session_id} started accumulating audio")
+            
+            if buffer_ready:
+                # We have 10 seconds! Perform definitive speaker identification
+                logger.info(f"🎯 Session {session_id} reached 10 seconds - performing definitive identification")
+                
+                # Get WAV format audio for Diglett
+                wav_bytes = buffer_manager.get_buffer_as_wav()
+                
+                # Get embedding from Diglett
+                embedding = await self.voice_service.get_embedding(wav_bytes)
+                if not embedding:
+                    logger.error(f"Failed to get embedding for session {session_id}")
+                    return {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
+                
+                # Perform definitive identification
+                result = await self.voice_service._identify_or_register_speaker_definitively(embedding, session_id)
+                
+                # Store result in session state to avoid re-identification
+                self.session_speaker_states[session_id] = {
+                    "status": "identified",
+                    "speaker_info": result
+                }
+                
+                # Get agentic context
+                if self.agentic_speaker_system and result.get("status") in ["identified", "registered"]:
                     agentic_context = self.agentic_speaker_system.get_current_speaker_context()
                     if agentic_context:
                         result["greeting"] = agentic_context
-                        
-                logger.info(f"🎭 DEFINITIVE speaker recognition: {result}")
+                        # Update cached result
+                        self.session_speaker_states[session_id]["speaker_info"] = result
                 
-            return result or {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
+                logger.info(f"🎭 DEFINITIVE speaker recognition completed for session {session_id}: {result}")
+                return result
+            
+            else:
+                # Still accumulating - return progress
+                duration = buffer_manager.get_buffer_duration_seconds()
+                progress = duration / 10.0
+                
+                return {
+                    "status": "accumulating",
+                    "buffer_duration": duration,
+                    "target_duration": 10.0,
+                    "progress": progress,
+                    "session_id": session_id
+                }
             
         except Exception as e:
-            logger.error(f"Speaker accumulation error: {e}")
+            logger.error(f"Session-persistent speaker accumulation error for {session_id}: {e}")
             return {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
     
     async def handle_name_learning(self, transcript: str, session_id: str) -> Optional[str]:
