@@ -49,6 +49,11 @@ class Config:
     # WhisperLive Settings
     NO_SPEECH_THRESHOLD: float = float(os.getenv("NO_SPEECH_THRESHOLD", "0.45"))
     VAD_ENABLED: bool = os.getenv("VAD_ENABLED", "true").lower() == "true"
+    
+    # Speaker Recognition VAD Settings
+    SPEAKER_VAD_THRESHOLD: float = float(os.getenv("SPEAKER_VAD_THRESHOLD", "0.01"))
+    SPEAKER_VAD_MIN_SEGMENT_MS: int = int(os.getenv("SPEAKER_VAD_MIN_SEGMENT_MS", "200"))
+    SPEAKER_VAD_PAD_MS: int = int(os.getenv("SPEAKER_VAD_PAD_MS", "100"))
 
 # Single config instance
 config = Config()
