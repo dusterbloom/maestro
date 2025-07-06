@@ -21,17 +21,6 @@ services:
       kokoro:
         condition: service_started
 
-  diglett:
-    build:
-      context: ./diglett
-      dockerfile: Dockerfile
-    ports:
-      - "3210:80"
-    volumes:
-      - diglett-data:/app/data
-    environment:
-      - PYTHONUNBUFFERED=1
-    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
