@@ -35,6 +35,9 @@ export class VoiceWebSocket {
           case "assistant.speak":
             this.onAssistantSpeakCallback?.(message.data);
             break;
+          case "transcript.update":
+            this.onTranscriptCallback?.(message.data);
+            break;
           case "error":
             this.onErrorCallback?.(message.data.message);
             break;
