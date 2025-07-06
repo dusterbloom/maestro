@@ -52,3 +52,11 @@ class MemoryService:
     async def update_speaker_name(self, user_id: str, name: str):
         await self.redis_client.hset(f"speaker:{user_id}", "name", name)
         await self.redis_client.hset(f"speaker:{user_id}", "status", "active")
+    
+    async def add_user_memory(self, user_id: str, memory_data: dict):
+        """Add memory data to user's profile"""
+        memory_key = f"memory:{user_id}:{memory_data.get('event_type', 'general')}"
+        memory_json = json.dumps(memory_data)
+        await self.redis_client.lpush(memory_key, memory_json)
+        # Keep only last 100 memories per event type
+        await self.redis_client.ltrim(memory_key, 0, 99)
