@@ -39,22 +39,19 @@ export default function VoiceButton({ onStatusChange, onAudioData, onError }: Vo
     }
   }, [onStatusChange]);
 
-  const handleMouseDown = () => {
-    startRecording();
-  };
-
-  const handleMouseUp = () => {
-    stopRecording();
-  };
+  const handleToggleRecording = useCallback(() => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  }, [isRecording, startRecording, stopRecording]);
 
   return (
     <button
-      onMouseDown={handleMouseDown}
-      onMouseUp={handleMouseUp}
-      onTouchStart={handleMouseDown}
-      onTouchEnd={handleMouseUp}
+      onClick={handleToggleRecording}
       className={`w-32 h-32 rounded-full transition-all duration-200 font-bold text-lg shadow-lg ${isRecording ? 'bg-red-500 scale-110' : 'bg-blue-500'}`}>
-      {isRecording ? 'Recording...' : 'Hold to Speak'}
+      {isRecording ? 'Stop Conversation' : 'Start Conversation'}
     </button>
   );
 }
