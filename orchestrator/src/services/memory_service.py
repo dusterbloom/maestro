@@ -2,6 +2,7 @@ import chromadb
 import redis.asyncio as redis
 import uuid
 import asyncio
+import json
 from config import config
 
 class MemoryService:
