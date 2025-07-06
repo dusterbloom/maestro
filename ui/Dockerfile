@@ -1,13 +1,12 @@
-FROM node:18-alpine AS base
+FROM oven/bun:latest AS base
 
 # Install dependencies only when needed
 FROM base AS deps
-RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # Copy package files
-COPY package.json ./
-RUN npm install
+COPY package.json bun.lockb ./
+RUN bun install --frozen-lockfile
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -16,7 +15,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Build the application
-RUN npm run build
+RUN bun run build
 
 # Production image, copy all the files and run next
 FROM base AS runner
