@@ -43,7 +43,7 @@ class AudioBufferManager:
         for sample in audio_chunk:
             self.audio_buffer.append(sample)
             
-        # Check if we have 5 seconds of audio
+        # Check if we have 10 seconds of audio
         current_samples = len(self.audio_buffer)
         duration_seconds = current_samples / self.sample_rate
         
