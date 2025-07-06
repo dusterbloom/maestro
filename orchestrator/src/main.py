@@ -321,7 +321,22 @@ class VoiceOrchestrator:
 
     async def stream_llm_tokens(self, text: str, context: str = ""):
         """Stream LLM tokens using native ollama client for maximum performance"""
-        prompt = f"{context}\n\nUser: {text}\nAssistant:" if context else f"User: {text}\nAssistant:"
+        
+        # Enhanced system context for speaker awareness
+        system_context = """You are a helpful voice assistant. You have speaker recognition capabilities and can remember users by their voice.
+
+Key behaviors:
+- When you recognize a returning user, greet them warmly by name
+- When you meet someone new, ask for their name and remember it
+- Be conversational, helpful, and personable
+- Keep responses concise for voice interaction
+- If unsure about voice recognition, politely ask for clarification"""
+        
+        # Build enhanced prompt with speaker awareness
+        if context:
+            prompt = f"{system_context}\n\n{context}\n\nUser: {text}\nAssistant:"
+        else:
+            prompt = f"{system_context}\n\nUser: {text}\nAssistant:"
         
         try:
             # Use native ollama streaming for best performance
