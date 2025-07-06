@@ -570,8 +570,10 @@ async def ultra_fast_stream(request: TranscriptRequest):
                     # Speaker told us their name - use personalized response
                     effective_prompt = f"{name_learning_response}How can I help you?"
                 elif speaker_context:
-                    # Use speaker greeting context
-                    effective_prompt = f"{speaker_context}{cleaned_sentence}"
+                    # Add speaker context to system context, not user prompt
+                    # This tells the LLM who they're talking to
+                    context = f"[SPEAKER CONTEXT: {speaker_context.strip()}]\n{context}"
+                    effective_prompt = cleaned_sentence
                 else:
                     # Default prompt
                     effective_prompt = cleaned_sentence
