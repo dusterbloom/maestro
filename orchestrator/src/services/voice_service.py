@@ -71,13 +71,26 @@ class AudioBufferManager:
         int16_array = (float_array * 32767).astype(np.int16)
         return int16_array.tobytes()
     
-    def get_buffer_as_wav(self) -> bytes:
-        """Get current buffer as WAV file bytes for Diglett"""
+    def get_buffer_as_wav(self, apply_vad: bool = True, vad_threshold: float = 0.01) -> bytes:
+        """Get current buffer as WAV file bytes for Diglett with optional VAD filtering"""
         if not self.audio_buffer:
             return b""
             
-        # Convert float32 samples to int16 PCM
+        # Convert float32 samples to numpy array
         float_array = np.array(list(self.audio_buffer), dtype=np.float32)
+        
+        if apply_vad:
+            # Apply Voice Activity Detection to filter out silent parts
+            voice_active_samples = self._extract_voice_segments(float_array, vad_threshold)
+            
+            if len(voice_active_samples) == 0:
+                print("⚠️ No voice activity detected in audio buffer")
+                return b""
+            
+            print(f"🎤 VAD filtering: {len(float_array)} -> {len(voice_active_samples)} samples ({len(voice_active_samples)/len(float_array)*100:.1f}% retained)")
+            float_array = voice_active_samples
+        
+        # Convert to int16 PCM
         int16_array = (float_array * 32767).astype(np.int16)
         
         # Create WAV file in memory
@@ -90,6 +103,90 @@ class AudioBufferManager:
         
         wav_buffer.seek(0)
         return wav_buffer.read()
+    
+    def _extract_voice_segments(self, audio_array: np.ndarray, threshold: float = 0.01, 
+                               min_segment_duration_ms: int = 200, 
+                               pad_duration_ms: int = 100) -> np.ndarray:
+        """Extract voice-active segments from audio using simple energy-based VAD"""
+        
+        # Calculate energy in sliding window
+        window_size = int(self.sample_rate * 0.025)  # 25ms window
+        hop_size = int(self.sample_rate * 0.010)     # 10ms hop
+        
+        # Calculate RMS energy for each frame
+        frame_energies = []
+        for i in range(0, len(audio_array) - window_size, hop_size):
+            frame = audio_array[i:i + window_size]
+            energy = np.sqrt(np.mean(frame ** 2))
+            frame_energies.append(energy)
+        
+        frame_energies = np.array(frame_energies)
+        
+        # Apply voice activity detection
+        voice_active = frame_energies > threshold
+        
+        # Smooth VAD decisions (remove short gaps and spurious detections)
+        min_segment_frames = int(min_segment_duration_ms / 10)  # Convert ms to frames
+        
+        # Fill short gaps (< 200ms)
+        for i in range(1, len(voice_active) - 1):
+            if not voice_active[i] and voice_active[i-1] and voice_active[i+1]:
+                gap_size = 1
+                j = i + 1
+                while j < len(voice_active) and not voice_active[j]:
+                    gap_size += 1
+                    j += 1
+                if gap_size < min_segment_frames // 2:  # Fill gaps shorter than 100ms
+                    voice_active[i:j] = True
+        
+        # Remove short voice segments (< 200ms) 
+        i = 0
+        while i < len(voice_active):
+            if voice_active[i]:
+                segment_start = i
+                while i < len(voice_active) and voice_active[i]:
+                    i += 1
+                segment_length = i - segment_start
+                
+                if segment_length < min_segment_frames:
+                    voice_active[segment_start:i] = False
+            else:
+                i += 1
+        
+        # Extract voice segments with padding
+        voice_segments = []
+        pad_samples = int(self.sample_rate * pad_duration_ms / 1000)
+        
+        i = 0
+        while i < len(voice_active):
+            if voice_active[i]:
+                segment_start = i
+                while i < len(voice_active) and voice_active[i]:
+                    i += 1
+                segment_end = i
+                
+                # Convert frame indices to sample indices
+                start_sample = max(0, segment_start * hop_size - pad_samples)
+                end_sample = min(len(audio_array), segment_end * hop_size + pad_samples)
+                
+                # Extract segment
+                segment = audio_array[start_sample:end_sample]
+                voice_segments.append(segment)
+            else:
+                i += 1
+        
+        if not voice_segments:
+            return np.array([], dtype=np.float32)
+        
+        # Concatenate all voice segments
+        combined_voice = np.concatenate(voice_segments)
+        
+        # Ensure we don't exceed the original duration too much
+        max_samples = len(audio_array)
+        if len(combined_voice) > max_samples:
+            combined_voice = combined_voice[:max_samples]
+        
+        return combined_voice
     
     def clear_buffer(self):
         """Clear buffer and reset timing"""
