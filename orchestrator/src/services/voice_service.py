@@ -475,26 +475,23 @@ class VoiceService:
             return {"status": "error", "message": str(e)}
     
     def _calculate_similarity(self, embedding1: List[float], embedding2: List[float]) -> float:
-        """Calculate cosine similarity between embeddings"""
+        """Calculate cosine similarity between Resemblyzer embeddings (already L2-normalized)"""
         try:
             vec1 = np.array(embedding1)
             vec2 = np.array(embedding2)
             
-            # Cosine similarity
-            dot_product = np.dot(vec1, vec2)
-            norm1 = np.linalg.norm(vec1)
-            norm2 = np.linalg.norm(vec2)
+            # Resemblyzer embeddings are already L2-normalized, so dot product = cosine similarity
+            similarity = np.dot(vec1, vec2)
             
-            if norm1 == 0 or norm2 == 0:
-                return 0.0
-                
-            similarity = dot_product / (norm1 * norm2)
+            # Resemblyzer cosine similarity is already in 0-1 range (since embeddings are normalized)
+            # Clamp to ensure it's in valid range
+            similarity = np.clip(similarity, 0.0, 1.0)
             
-            # Convert to 0-1 range (cosine similarity is -1 to 1)
-            return (similarity + 1) / 2
+            logger.debug(f"Cosine similarity between embeddings: {similarity:.4f}")
+            return float(similarity)
             
         except Exception as e:
-            print(f"Error calculating similarity: {e}")
+            logger.error(f"Error calculating similarity: {e}")
             return 0.0
     
     async def update_speaker_name(self, name: str) -> bool:
