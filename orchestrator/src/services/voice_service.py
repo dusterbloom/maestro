@@ -392,34 +392,22 @@ class VoiceService:
         print("Cleared registered speaker")
 
     async def get_embedding(self, audio_data: bytes) -> list[float] | None:
-        """Get embedding from Diglett service (unchanged core functionality)"""
+        """Get embedding from Diglett service using WAV format"""
         try:
-            # Handle different input formats
-            if isinstance(audio_data, np.ndarray):
-                # Already int16 PCM
-                pcm_bytes = audio_data.tobytes()
-            else:
-                # Convert Float32Array bytes to int16 PCM format that Diglett expects
-                try:
-                    # Try to interpret as float32 first
-                    float_array = np.frombuffer(audio_data, dtype=np.float32)
-                    int16_array = (float_array * 32767).astype(np.int16)
-                    pcm_bytes = int16_array.tobytes()
-                except ValueError:
-                    # Maybe it's already int16 PCM
-                    pcm_bytes = audio_data
-            
-            # Send as file upload (Diglett expects File() upload, not raw bytes)
-            files = {"file": ("audio.pcm", pcm_bytes, "audio/pcm")}
+            # audio_data should now be WAV format from get_buffer_as_wav()
+            # Send as file upload (Diglett expects WAV file upload)
+            files = {"file": ("audio.wav", audio_data, "audio/wav")}
             response = await self.client.post("/embed", files=files)
             response.raise_for_status()
             result = response.json()
             
             # Diglett returns direct dict format: {"speaker_embedding": [...], "avg_db": float, "speaker_name": str}
-            if isinstance(result, dict):
+            if isinstance(result, dict) and "speaker_embedding" in result:
+                print(f"✅ Successfully got embedding from Diglett (length: {len(result['speaker_embedding'])})")
                 return result.get("speaker_embedding")
                 
+            print(f"❌ Unexpected Diglett response format: {result}")
             return None
         except Exception as e:
-            print(f"Error getting embedding from Diglett: {e}")
+            print(f"❌ Error getting embedding from Diglett: {e}")
             return None
