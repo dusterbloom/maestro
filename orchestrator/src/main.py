@@ -371,11 +371,23 @@ Key behaviors:
             yield ""
 
     def cleanup_completed_session(self, session_id: str):
-        """Clean up a completed TTS session"""
+        """Clean up a completed session including speaker recognition data"""
         try:
+            # Clean up TTS sessions
             if session_id in self.active_tts_sessions:
                 del self.active_tts_sessions[session_id]
                 logger.info(f"Cleaned up completed TTS session {session_id}")
+                
+            # Clean up speaker recognition data to prevent memory leaks
+            if session_id in self.session_audio_buffers:
+                self.session_audio_buffers[session_id].clear_buffer()
+                del self.session_audio_buffers[session_id]
+                logger.info(f"Cleared audio buffer for session {session_id}")
+                
+            if session_id in self.session_speaker_states:
+                del self.session_speaker_states[session_id]
+                logger.info(f"Cleared speaker state for session {session_id}")
+                
         except Exception as e:
             logger.error(f"Error cleaning up session {session_id}: {e}")
 
