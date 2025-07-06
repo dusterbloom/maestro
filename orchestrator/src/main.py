@@ -626,41 +626,20 @@ async def ultra_fast_stream(request: TranscriptRequest):
             
             logger.info(f"Ultra-Fast-Stream: Processing complete sentence: {cleaned_sentence}")
         
-        # 2. ENHANCED: Session-persistent definitive speaker recognition with 10-second buffering
-        speaker_context = ""
-        name_learning_response = None
-        
+        # 2. PASSIVE: Just capture audio chunks in background (non-blocking)
         if request.audio_data and orchestrator.memory_enabled:
-            try:
-                # First check if we already have speaker info for this session
-                cached_speaker_info = orchestrator.get_session_speaker_info(request.session_id)
-                
-                if cached_speaker_info:
-                    # Speaker already identified - use cached info
-                    speaker_context = cached_speaker_info.get("greeting", "")
-                    logger.debug(f"Using cached speaker info for session {request.session_id}: {cached_speaker_info.get('name', 'Unknown')}")
-                else:
-                    # Continue accumulating audio for identification
-                    audio_bytes = base64.b64decode(request.audio_data)
-                    speaker_result = await orchestrator.accumulate_speaker_audio(audio_bytes, request.session_id)
-                    
-                    if speaker_result.get("status") == "accumulating":
-                        # Still buffering - show progress
-                        progress = speaker_result.get("progress", 0)
-                        duration = speaker_result.get("buffer_duration", 0)
-                        logger.info(f"🎤 Session {request.session_id} accumulating: {duration:.1f}s / 10.0s ({progress:.1%} complete)")
-                    elif speaker_result.get("status") in ["identified", "registered"]:
-                        # Speaker recognition completed definitively
-                        speaker_context = speaker_result.get("greeting", "")
-                        if speaker_result.get("is_definitive"):
-                            logger.info(f"🎭 DEFINITIVE RECOGNITION for session {request.session_id}: {speaker_result['name']} ({speaker_result.get('confidence', 1.0):.2f})")
-                        else:
-                            logger.info(f"Speaker result for session {request.session_id}: {speaker_result['name']} (status: {speaker_result['status']})")
-                        
-            except Exception as e:
-                logger.warning(f"Speaker recognition failed for session {request.session_id}: {e}")
+            # Fire-and-forget: accumulate audio passively
+            audio_bytes = base64.b64decode(request.audio_data)
+            asyncio.create_task(orchestrator.passively_accumulate_speaker_audio(audio_bytes, request.session_id))
         
-        # 3. Check for name learning in transcript
+        # 3. Get existing speaker context (if any)
+        speaker_context = ""
+        cached_speaker_info = orchestrator.get_session_speaker_info(request.session_id)
+        if cached_speaker_info:
+            speaker_context = cached_speaker_info.get("greeting", "")
+        
+        # 4. Check for name learning in transcript
+        name_learning_response = None
         if orchestrator.agentic_speaker_system:
             name_learning_response = await orchestrator.handle_name_learning(cleaned_sentence, request.session_id)
         
