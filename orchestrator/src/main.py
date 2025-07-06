@@ -476,6 +476,13 @@ Key behaviors:
             logger.error(f"Session-persistent speaker accumulation error for {session_id}: {e}")
             return {"user_id": "guest", "name": "Guest", "is_new": False, "greeting": ""}
     
+    def get_session_speaker_info(self, session_id: str) -> dict:
+        """Get cached speaker info for session if already identified"""
+        session_state = self.session_speaker_states.get(session_id, {})
+        if session_state.get("status") == "identified":
+            return session_state.get("speaker_info", {})
+        return {}
+    
     async def handle_name_learning(self, transcript: str, session_id: str) -> Optional[str]:
         """
         Check if transcript contains name introduction and learn it
