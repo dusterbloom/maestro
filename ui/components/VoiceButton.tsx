@@ -29,8 +29,10 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
   const audioQueueRef = useRef<Array<{sequence: number, audioData: string, text: string}>>([]);
   const nextToPlayRef = useRef<number>(1);
   
-  // NEW: Store last recorded audio for speaker identification
+  // ENHANCED: Store audio chunks for magical speaker recognition (5-second buffering)
   const lastRecordedAudioRef = useRef<ArrayBuffer | null>(null);
+  const audioChunksRef = useRef<Float32Array[]>([]);
+  const speakerProgressRef = useRef<number>(0);
   
   const updateStatus = useCallback((newStatus: typeof status) => {
     setStatus(newStatus);
@@ -88,8 +90,32 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
         recorderRef.current.start((audioData: Float32Array) => {
           if (whisperWsRef.current?.isConnected()) {
             whisperWsRef.current.sendAudio(audioData.buffer);
-            // NEW: Store the audio data for speaker identification
-            lastRecordedAudioRef.current = audioData.buffer.slice(0);
+            
+            // ENHANCED: Store chunks for magical speaker recognition
+            audioChunksRef.current.push(new Float32Array(audioData));
+            
+            // Keep last 5 seconds of audio (approximately 16000 * 5 samples)
+            const maxSamples = 16000 * 5; // 5 seconds at 16kHz
+            let totalSamples = audioChunksRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
+            
+            while (totalSamples > maxSamples && audioChunksRef.current.length > 1) {
+              const removed = audioChunksRef.current.shift();
+              if (removed) totalSamples -= removed.length;
+            }
+            
+            // Store the full 5-second buffer for speaker identification
+            if (audioChunksRef.current.length > 0) {
+              const combinedLength = audioChunksRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
+              const combinedAudio = new Float32Array(combinedLength);
+              let offset = 0;
+              
+              for (const chunk of audioChunksRef.current) {
+                combinedAudio.set(chunk, offset);
+                offset += chunk.length;
+              }
+              
+              lastRecordedAudioRef.current = combinedAudio.buffer;
+            }
           }
         });
       }
@@ -191,7 +217,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                 const audioBytes = new Uint8Array(lastRecordedAudioRef.current);
                 const audioBase64 = btoa(String.fromCharCode(...audioBytes));
                 requestBody.audio_data = audioBase64;
-                console.log('🎤 Including audio data for speaker identification');
+                console.log('🎭 Including 5-second audio buffer for magical speaker recognition');
               }
               
               const response = await fetch('/api/process-transcript', {
@@ -417,8 +443,32 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
               recorderRef.current.start((audioData: Float32Array) => {
                 if (whisperWsRef.current?.isConnected()) {
                   whisperWsRef.current.sendAudio(audioData.buffer);
-                  // NEW: Store the audio data for speaker identification
-                  lastRecordedAudioRef.current = audioData.buffer.slice(0);
+                  
+                  // ENHANCED: Store chunks for magical speaker recognition
+                  audioChunksRef.current.push(new Float32Array(audioData));
+                  
+                  // Keep last 5 seconds of audio
+                  const maxSamples = 16000 * 5;
+                  let totalSamples = audioChunksRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
+                  
+                  while (totalSamples > maxSamples && audioChunksRef.current.length > 1) {
+                    const removed = audioChunksRef.current.shift();
+                    if (removed) totalSamples -= removed.length;
+                  }
+                  
+                  // Update combined buffer
+                  if (audioChunksRef.current.length > 0) {
+                    const combinedLength = audioChunksRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
+                    const combinedAudio = new Float32Array(combinedLength);
+                    let offset = 0;
+                    
+                    for (const chunk of audioChunksRef.current) {
+                      combinedAudio.set(chunk, offset);
+                      offset += chunk.length;
+                    }
+                    
+                    lastRecordedAudioRef.current = combinedAudio.buffer;
+                  }
                 }
               });
               console.log('   ⚡ Recording started instantly');
@@ -497,6 +547,11 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
       if (playerRef.current) {
         playerRef.current.cleanup();
       }
+      
+      // Clear magical speaker recognition buffers
+      lastRecordedAudioRef.current = null;
+      audioChunksRef.current = [];
+      speakerProgressRef.current = 0;
     };
   }, []); // Remove unstable dependencies that cause re-connections
   
@@ -515,8 +570,32 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
         if (whisperWsRef.current?.isConnected()) {
           // Send resampled audio data directly to WhisperLive
           whisperWsRef.current.sendAudio(audioData.buffer);
-          // NEW: Store the audio data for speaker identification
-          lastRecordedAudioRef.current = audioData.buffer.slice(0);
+          
+          // ENHANCED: Store chunks for magical speaker recognition
+          audioChunksRef.current.push(new Float32Array(audioData));
+          
+          // Keep last 5 seconds of audio
+          const maxSamples = 16000 * 5;
+          let totalSamples = audioChunksRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
+          
+          while (totalSamples > maxSamples && audioChunksRef.current.length > 1) {
+            const removed = audioChunksRef.current.shift();
+            if (removed) totalSamples -= removed.length;
+          }
+          
+          // Update combined buffer
+          if (audioChunksRef.current.length > 0) {
+            const combinedLength = audioChunksRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
+            const combinedAudio = new Float32Array(combinedLength);
+            let offset = 0;
+            
+            for (const chunk of audioChunksRef.current) {
+              combinedAudio.set(chunk, offset);
+              offset += chunk.length;
+            }
+            
+            lastRecordedAudioRef.current = combinedAudio.buffer;
+          }
         }
       });
     } catch (error) {
