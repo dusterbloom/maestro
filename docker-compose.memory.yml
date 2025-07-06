@@ -95,5 +95,3 @@ services:
       - orchestrator
     restart: unless-stopped
 
-volumes:
-  diglett-data:
