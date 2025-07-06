@@ -1,13 +1,29 @@
 import chromadb
 import redis.asyncio as redis
 import uuid
+import time
 from config import config
 
 class MemoryService:
     def __init__(self):
         self.redis_client = redis.from_url(config.REDIS_URL, decode_responses=True)
-        self.chroma_client = chromadb.HttpClient(host=config.CHROMADB_URL, port=8002)
-        self.collection = self.chroma_client.get_or_create_collection("speaker_embeddings")
+        
+        max_retries = 10
+        retry_delay = 5  # seconds
+
+        for i in range(max_retries):
+            try:
+                self.chroma_client = chromadb.HttpClient(host=config.CHROMADB_URL, port=8002)
+                # Attempt to get a collection to verify connection
+                self.collection = self.chroma_client.get_or_create_collection("speaker_embeddings")
+                print(f"Successfully connected to ChromaDB after {i+1} attempts.")
+                break
+            except Exception as e:
+                print(f"Attempt {i+1}/{max_retries} to connect to ChromaDB failed: {e}")
+                if i < max_retries - 1:
+                    time.sleep(retry_delay)
+                else:
+                    raise # Re-raise the last exception if all retries fail
 
     async def find_speaker_by_embedding(self, embedding: list[float]) -> str | None:
         results = self.collection.query(query_embeddings=[embedding], n_results=1)
