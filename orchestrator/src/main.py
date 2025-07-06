@@ -25,11 +25,16 @@ class VoiceOrchestrator:
         self.voice_service = VoiceService()
         self.memory_service = MemoryService()
         self.ollama_client = ollama.AsyncClient(host=config.OLLAMA_URL)
+        self.tts_client = httpx.AsyncClient(base_url=config.TTS_URL, timeout=config.TTS_TIMEOUT)
+        self.whisper_client = httpx.AsyncClient(base_url=config.WHISPER_URL, timeout=config.WHISPER_TIMEOUT)
         self.active_connections = {}
+        self.session_states = {}
 
     async def handle_connection(self, websocket: WebSocket, session_id: str):
         await websocket.accept()
         self.active_connections[session_id] = websocket
+        self.session_states[session_id] = {"user_id": None, "status": "unidentified"}
+        logger.info(f"Session {session_id} connected.")
         try:
             while True:
                 data = await websocket.receive_json()
@@ -40,34 +45,117 @@ class VoiceOrchestrator:
                     await self.handle_speaker_claim(session_id, data.get("user_id"), data.get("new_name"))
         except WebSocketDisconnect:
             del self.active_connections[session_id]
+            del self.session_states[session_id]
             logger.info(f"Session {session_id} disconnected.")
+
+    async def transcribe_audio(self, audio_data: bytes) -> str:
+        try:
+            # WhisperLive expects WAV audio, so ensure the frontend sends WAV or convert here
+            # For now, assuming frontend sends compatible audio
+            response = await self.whisper_client.post(
+                "/asr", # Assuming WhisperLive has an ASR endpoint for direct audio
+                headers={'Content-Type': 'audio/wav'},
+                content=audio_data
+            )
+            response.raise_for_status()
+            return response.json().get("text", "").strip()
+        except Exception as e:
+            logger.error(f"WhisperLive transcription error: {e}")
+            return ""
+
+    async def synthesize_speech(self, text: str) -> bytes:
+        try:
+            response = await self.tts_client.post(
+                "/v1/audio/speech",
+                json={
+                    "model": "kokoro",
+                    "input": text,
+                    "voice": config.TTS_VOICE,
+                    "response_format": "wav",
+                    "stream": False,
+                    "speed": config.TTS_SPEED,
+                    "volume_multiplier": config.TTS_VOLUME
+                }
+            )
+            response.raise_for_status()
+            return response.content
+        except Exception as e:
+            logger.error(f"TTS synthesis error: {e}")
+            return b""
 
     async def handle_audio_stream(self, session_id: str, audio_base64: str):
         audio_data = base64.b64decode(audio_base64)
-        embedding = await self.voice_service.get_embedding(audio_data)
+        
+        # 1. Transcribe audio
+        transcript = await self.transcribe_audio(audio_data)
+        if not transcript:
+            logger.warning(f"No transcript generated for session {session_id}")
+            return
+        await self.send_event(session_id, "transcript.update", {"text": transcript})
 
+        # 2. Speaker Identification
+        embedding = await self.voice_service.get_embedding(audio_data)
         if not embedding:
-            await self.send_error(session_id, "Failed to create voice embedding.")
+            logger.warning(f"No embedding generated for session {session_id}")
             return
 
-        user_id = await self.memory_service.find_speaker_by_embedding(embedding)
+        current_user_id = self.session_states[session_id]["user_id"]
+        profile = None
 
-        if user_id:
-            profile = await self.memory_service.get_speaker_profile(user_id)
-            await self.send_event(session_id, "speaker.identified", {"user_id": user_id, "name": profile.get("name", "Unknown")})
+        if current_user_id:
+            # User already identified in this session
+            profile = await self.memory_service.get_speaker_profile(current_user_id)
         else:
-            user_id = await self.memory_service.create_speaker_profile(embedding)
-            profile = await self.memory_service.get_speaker_profile(user_id)
-            await self.send_event(session_id, "speaker.identified", {"user_id": user_id, "name": profile.get("name"), "status": "unclaimed"})
-            await self.initiate_naming_conversation(session_id, user_id, profile.get("name"))
+            # Try to find speaker by embedding
+            found_user_id = await self.memory_service.find_speaker_by_embedding(embedding)
+            if found_user_id:
+                profile = await self.memory_service.get_speaker_profile(found_user_id)
+                self.session_states[session_id]["user_id"] = found_user_id
+                self.session_states[session_id]["status"] = "identified"
+                await self.send_event(session_id, "speaker.identified", {"user_id": found_user_id, "name": profile.get("name", "Unknown")})
+            else:
+                # New speaker, create profile
+                new_user_id = await self.memory_service.create_speaker_profile(embedding)
+                profile = await self.memory_service.get_speaker_profile(new_user_id)
+                self.session_states[session_id]["user_id"] = new_user_id
+                self.session_states[session_id]["status"] = "pending_naming"
+                await self.send_event(session_id, "speaker.identified", {"user_id": new_user_id, "name": profile.get("name"), "status": "unclaimed"})
+                await self.initiate_naming_conversation(session_id, new_user_id, profile.get("name"))
+
+        # 3. LLM Processing and Response
+        llm_response_text = ""
+        if self.session_states[session_id]["status"] == "pending_naming":
+            # LLM extracts name from transcript
+            name_extraction_prompt = f"The user said: '{transcript}'. They are responding to a request for their name. Extract ONLY their name from this response. Respond with just the name, and nothing else."
+            extracted_name = await self.generate_llm_response(name_extraction_prompt)
+            if extracted_name and len(extracted_name.split()) <= 3: # Basic validation for name
+                await self.memory_service.update_speaker_name(self.session_states[session_id]["user_id"], extracted_name)
+                self.session_states[session_id]["status"] = "identified"
+                profile = await self.memory_service.get_speaker_profile(self.session_states[session_id]["user_id"])
+                await self.send_event(session_id, "speaker.renamed", {"user_id": profile["user_id"], "new_name": profile["name"]})
+                llm_response_text = await self.generate_llm_response(f"Confirm to the user, whose name is {profile["name"]}, that you will remember their name.")
+            else:
+                llm_response_text = await self.generate_llm_response(f"I couldn't quite get your name from '{transcript}'. Could you please say it again?")
+        else:
+            # General conversation
+            llm_response_text = await self.generate_llm_response(transcript)
+
+        # 4. Synthesize and send audio response
+        if llm_response_text:
+            audio_response = await self.synthesize_speech(llm_response_text)
+            if audio_response:
+                await self.send_event(session_id, "assistant.speak", {"text": llm_response_text, "audio_data": base64.b64encode(audio_response).decode()})
 
     async def initiate_naming_conversation(self, session_id: str, user_id: str, temp_name: str):
         prompt = f"A new user, currently named '{temp_name}', has joined. Please ask them what you should call them. Be friendly and direct."
         response = await self.generate_llm_response(prompt)
+        # Send only text, audio will be generated by handle_audio_stream after transcription
         await self.send_event(session_id, "assistant.speak", {"text": response})
 
     async def handle_speaker_claim(self, session_id: str, user_id: str, new_name: str):
         await self.memory_service.update_speaker_name(user_id, new_name)
+        self.session_states[session_id]["status"] = "identified"
+        profile = await self.memory_service.get_speaker_profile(user_id)
         await self.send_event(session_id, "speaker.renamed", {"user_id": user_id, "new_name": new_name})
         prompt = f"The user has chosen the name '{new_name}'. Please confirm that you will remember it."
         response = await self.generate_llm_response(prompt)
