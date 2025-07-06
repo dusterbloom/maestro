@@ -521,48 +521,47 @@ class VoiceService:
         print("Cleared registered speaker")
 
     async def get_embedding(self, audio_data: bytes) -> list[float] | None:
-        """Get embedding from Diglett service using WAV format"""
+        """Get embedding using Resemblyzer from WAV audio data"""
         try:
-            print(f"🎤 Sending {len(audio_data)} bytes of WAV audio to Diglett for embedding...")
+            logger.info(f"🎤 Generating speaker embedding from {len(audio_data)} bytes of WAV audio using Resemblyzer...")
             
-            # audio_data should now be WAV format from get_buffer_as_wav()
-            # Send as file upload (Diglett expects WAV file upload)
-            files = {"file": ("audio.wav", audio_data, "audio/wav")}
-            response = await self.client.post("/embed", files=files)
+            # Create temporary file for Resemblyzer (it expects file path)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                temp_file.write(audio_data)
+                temp_file_path = temp_file.name
             
-            print(f"🔍 Diglett response status: {response.status_code}")
-            print(f"🔍 Diglett response headers: {dict(response.headers)}")
-            
-            response.raise_for_status()
-            
-            # Check content type
-            content_type = response.headers.get('content-type', '')
-            if 'application/json' not in content_type:
-                print(f"❌ Diglett returned non-JSON content-type: {content_type}")
-                response_text = response.text[:200] + "..." if len(response.text) > 200 else response.text
-                print(f"❌ Response content preview: {response_text}")
-                return None
-            
-            result = response.json()
-            print(f"✅ Diglett JSON response: {result}")
-            
-            # Diglett returns: {"speaker_name": str, "speaker_embedding": [float array], "avg_db": float}
-            if isinstance(result, dict) and "speaker_embedding" in result:
-                embedding = result.get("speaker_embedding")
-                speaker_name = result.get("speaker_name", "Unknown")
-                avg_db = result.get("avg_db", 0.0)
+            try:
+                # Convert to Path object and preprocess
+                wav_path = Path(temp_file_path)
                 
-                print(f"✅ Successfully got embedding from Diglett:")
-                print(f"   → Speaker: {speaker_name}")
-                print(f"   → Embedding length: {len(embedding) if embedding else 0}")
-                print(f"   → Average dB: {avg_db}")
+                # Preprocess the audio (Resemblyzer's preprocessing)
+                wav = preprocess_wav(wav_path)
                 
-                return embedding
+                # Generate embedding using Resemblyzer
+                embedding = self.voice_encoder.embed_utterance(wav)
                 
-            print(f"❌ Unexpected Diglett response format: {result}")
-            return None
+                # Convert numpy array to list for JSON serialization
+                embedding_list = embedding.tolist()
+                
+                # Calculate average dB for logging (similar to what Diglett did)
+                audio_rms = np.sqrt(np.mean(wav ** 2))
+                avg_db = 20 * np.log10(audio_rms + 1e-8)  # Add small epsilon to avoid log(0)
+                
+                logger.info(f"✅ Successfully generated Resemblyzer embedding:")
+                logger.info(f"   → Embedding dimensions: {len(embedding_list)}")
+                logger.info(f"   → Average dB: {avg_db:.2f}")
+                logger.info(f"   → Embedding vector norm: {np.linalg.norm(embedding):.4f}")
+                
+                return embedding_list
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    Path(temp_file_path).unlink()
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to clean up temp file: {cleanup_error}")
             
         except Exception as e:
-            print(f"❌ Error getting embedding from Diglett: {e}")
-            print(f"❌ Exception type: {type(e).__name__}")
+            logger.error(f"❌ Error generating Resemblyzer embedding: {e}")
+            logger.error(f"❌ Exception type: {type(e).__name__}")
             return None
