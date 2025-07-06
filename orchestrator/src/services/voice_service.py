@@ -1,15 +1,23 @@
-import httpx
 import asyncio
 import numpy as np
 import time
 import hashlib
 import io
 import wave
+import tempfile
+import logging
 from collections import deque
 from typing import Optional, Dict, List
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from config import config
+
+# Resemblyzer imports
+from resemblyzer import VoiceEncoder, preprocess_wav
+from pathlib import Path
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 @dataclass
 class SpeakerEvent:
