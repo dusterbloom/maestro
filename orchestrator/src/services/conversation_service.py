@@ -1,8 +1,8 @@
 import logging
 import ollama
-from ..config import config
-from .base_service import BaseService, ServiceResult
-from ..core.state_machine import Session
+from config import config
+from services.base_service import BaseService, ServiceResult
+from core.state_machine import Session
 
 logger = logging.getLogger(__name__)
 
