@@ -246,9 +246,10 @@ class VoiceService:
     """Enhanced VoiceService with 10-second buffering for definitive speaker recognition using Resemblyzer"""
     
     def __init__(self, memory_service=None):
-        # Initialize Resemblyzer voice encoder
+        # Initialize Resemblyzer voice encoder - this could be blocking, but only happens once at startup
         logger.info(f"Initializing Resemblyzer VoiceEncoder on device: {config.RESEMBLYZER_DEVICE}")
         self.voice_encoder = VoiceEncoder(device=config.RESEMBLYZER_DEVICE)
+        logger.info(f"✅ VoiceEncoder initialized successfully")
         
         # Thread pool executor for CPU-intensive operations
         self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="resemblyzer")
