@@ -37,11 +37,6 @@ services:
       - ./data/chromadb:/data
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
-      interval: 10s
-      timeout: 10s
-      retries: 15
     restart: unless-stopped
 
   whisper-live:
