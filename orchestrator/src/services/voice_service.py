@@ -280,6 +280,64 @@ class VoiceService:
         # Timeout for embedding operations (configurable)
         self.embedding_timeout = config.SPEAKER_EMBEDDING_TIMEOUT
     
+    def _initialize_redis_cache(self):
+        """Initialize Redis connection for embedding cache"""
+        try:
+            # Parse Redis URL from config
+            redis_url = getattr(config, 'REDIS_URL', 'redis://redis:6379')
+            self.redis_client = redis.from_url(redis_url, decode_responses=False)
+            
+            # Test connection
+            self.redis_client.ping()
+            logger.info(f"✅ Redis embedding cache initialized: {redis_url}")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Redis cache unavailable, will use direct processing: {e}")
+            self.redis_client = None
+    
+    def _get_audio_hash(self, audio_data: bytes) -> str:
+        """Generate consistent hash for audio data"""
+        return hashlib.sha256(audio_data).hexdigest()[:16]
+    
+    async def _get_cached_embedding(self, audio_hash: str) -> Optional[List[float]]:
+        """Retrieve cached embedding from Redis"""
+        if not self.redis_client:
+            return None
+            
+        try:
+            cache_key = f"embedding:{audio_hash}"
+            cached_data = self.redis_client.get(cache_key)
+            
+            if cached_data:
+                embedding = json.loads(cached_data.decode('utf-8'))
+                logger.info(f"🎯 Retrieved cached embedding for hash {audio_hash}")
+                return embedding
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Redis cache retrieval failed: {e}")
+            
+        return None
+    
+    async def _cache_embedding(self, audio_hash: str, embedding: List[float]):
+        """Cache embedding in Redis with TTL"""
+        if not self.redis_client:
+            return
+            
+        try:
+            cache_key = f"embedding:{audio_hash}"
+            embedding_json = json.dumps(embedding)
+            
+            self.redis_client.setex(
+                cache_key, 
+                self.embedding_cache_ttl, 
+                embedding_json
+            )
+            
+            logger.info(f"💾 Cached embedding for hash {audio_hash} (TTL: {self.embedding_cache_ttl}s)")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Redis cache storage failed: {e}")
+    
     def on_speaker_event(self, event_type: str):
         """Decorator to register event handlers"""
         def decorator(func):
