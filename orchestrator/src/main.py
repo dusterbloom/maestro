@@ -815,6 +815,18 @@ async def handle_incognito_conversation(transcript: str, session_id: str = "defa
             logger.warning(f"Failed to process audio data for speaker recognition: {e}")
             # Continue without speaker recognition
     
+    # Check if speaker has been identified in background and upgrade conversation
+    if orchestrator.memory_enabled:
+        speaker_info = orchestrator.get_session_speaker_info(session_id)
+        if speaker_info and speaker_info.get("status") == "identified":
+            # Upgrade to recognized conversation
+            user_id = speaker_info.get("user_id")
+            if user_id:
+                logger.info(f"🎉 Upgrading session {session_id} to RECOGNIZED state for user {user_id}")
+                conversation_manager.set_state(session_id, ConversationState.RECOGNIZED)
+                conversation_manager.set_session_data(session_id, {"user_id": user_id})
+                return await handle_recognized_conversation(session_id, transcript)
+    
     # Simplified conversation loop without memory
     logger.info(f"🎯 Processing incognito conversation for session {session_id}")
     
