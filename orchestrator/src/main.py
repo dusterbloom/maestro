@@ -623,16 +623,7 @@ Key behaviors:
                     self.session_speaker_states[session_id]["speaker_info"] = result
             
             logger.info(f"✅ Background speaker identification completed for session {session_id}: {result.get('status', 'unknown')}")
-            
-        except Exception as e:
-            logger.error(f"❌ Background speaker identification failed for session {session_id}: {e}")
-            # Fallback to guest
-            self.session_speaker_states[session_id] = {
-                "status": "completed",
-                "speaker_info": {"user_id": "guest", "name": "Friend", "is_new": False}
-            }
-            
-            logger.info(f"✅ Background speaker identification completed for session {session_id}: {result}")
+            logger.info(f"🎯 Speaker info cached for session {session_id} - ready for next conversation turn")
             
         except Exception as e:
             logger.error(f"❌ Background speaker identification failed for session {session_id}: {e}")
@@ -704,7 +695,7 @@ async def whisper_info():
 class TranscriptRequest(BaseModel):
     transcript: str
     session_id: str = "default"
-    audio_data: Optional[str] = None  # NEW: base64 encoded audio for speaker identification
+    audio_data: Optional[str] = None  # base64 encoded audio for speaker identification (optional)
 
 class InterruptRequest(BaseModel):
     session_id: str
@@ -745,7 +736,7 @@ async def ultra_fast_stream(request: TranscriptRequest):
 
     if state == ConversationState.INCOGNITO:
         # Handle incognito conversation
-        return await handle_incognito_conversation(transcript)
+        return await handle_incognito_conversation(transcript, session_id, audio_data)
 
     if state == ConversationState.GREETING:
         # Handle initial interaction
@@ -792,7 +783,17 @@ async def handle_recognized_conversation(session_id: str, transcript: str):
     
     return StreamingResponse(io.BytesIO(audio_data), media_type="audio/wav")
 
-async def handle_incognito_conversation(transcript: str):
+async def handle_incognito_conversation(transcript: str, session_id: str = "default", audio_data: str = None):
+    # Continue passive audio collection for speaker recognition (only if audio_data provided)
+    if orchestrator.memory_enabled and orchestrator.voice_service and audio_data:
+        try:
+            asyncio.create_task(orchestrator.passively_accumulate_speaker_audio(
+                base64.b64decode(audio_data), session_id
+            ))
+        except Exception as e:
+            logger.warning(f"Failed to process audio data for speaker recognition: {e}")
+            # Continue without speaker recognition
+    
     # Simplified conversation loop without memory
     response = await orchestrator.generate_response(transcript)
     audio_data = await orchestrator.synthesize(response)
@@ -811,39 +812,30 @@ async def handle_greeting(session_id: str, audio_data: str):
     try:
         if not audio_data:
             return JSONResponse({
-                "type": "audio_prompt",
+                "type": "audio_prompt", 
                 "message": "I didn't hear anything. Please speak to start."
             })
 
-        logger.info(f"🔄 Processing greeting for session {session_id}")
-        embedding = await orchestrator.voice_service.get_embedding(base64.b64decode(audio_data))
-        if not embedding:
-            logger.error(f"❌ Failed to generate embedding for session {session_id}")
-            return JSONResponse({"error": "Failed to generate embedding"}, status_code=500)
-            
-        logger.info(f"✅ Generated embedding for session {session_id}")
+        logger.info(f"🔄 Processing greeting for session {session_id} - starting conversation immediately")
+        
+        # Start passive audio collection in background (non-blocking)
+        if orchestrator.memory_enabled and orchestrator.voice_service and audio_data:
+            asyncio.create_task(orchestrator.passively_accumulate_speaker_audio(
+                base64.b64decode(audio_data), session_id
+            ))
+        
+        # Move directly to conversation - speaker ID will happen in background
+        conversation_manager.set_state(session_id, ConversationState.INCOGNITO)
+        return JSONResponse({
+            "type": "conversation_ready",
+            "message": "Hello! I'm ready to chat. What can I help you with?"
+        })
+        
     except Exception as e:
         logger.error(f"❌ Error in handle_greeting for session {session_id}: {e}")
         import traceback
         logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         return JSONResponse({"error": f"Internal error: {str(e)}"}, status_code=500)
-
-    speaker_profile = await orchestrator.memory_service.find_speaker_by_embedding(embedding)
-
-    if speaker_profile:
-        conversation_manager.set_state(session_id, ConversationState.RECOGNIZED)
-        conversation_manager.set_session_data(session_id, {"user_id": speaker_profile["user_id"]})
-        return JSONResponse({
-            "type": "recognized_speaker",
-            "message": f"Welcome back, {speaker_profile['name']}!"
-        })
-    else:
-        conversation_manager.set_state(session_id, ConversationState.ENROLLING)
-        conversation_manager.set_session_data(session_id, {"embeddings": [embedding], "enrollment_step": 1})
-        return JSONResponse({
-            "type": "enrollment_start",
-            "message": "I don't recognize your voice. To enroll, please repeat the following sentence three times: A quick brown fox jumped over the lazy dog."
-        })
 
 async def handle_enrollment(session_id: str, audio_data: str):
     session_data = conversation_manager.get_session_data(session_id)
