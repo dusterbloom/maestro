@@ -251,8 +251,8 @@ class VoiceService:
         self.voice_encoder = VoiceEncoder(device=config.RESEMBLYZER_DEVICE)
         logger.info(f"✅ VoiceEncoder initialized successfully")
         
-        # Thread pool executor for CPU-intensive operations
-        self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="resemblyzer")
+        # Thread pool executor for CPU-intensive operations (increased for parallel processing)
+        self.executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="resemblyzer")
         
         # Audio buffer for accumulating 10-second samples
         self.audio_buffer_manager = AudioBufferManager()
