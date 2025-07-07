@@ -1,12 +1,12 @@
 import asyncio
 import logging
 import numpy as np
-from orchestrator.src.core.state_machine import Session, SpeakerStateStatus
-from orchestrator.src.services.base_service import BaseService, ServiceResult
-from orchestrator.src.services.voice_service import VoiceService, AudioBufferManager
-from orchestrator.src.services.memory_service import MemoryService
-from orchestrator.src.utils.deduplicator import RequestDeduplicator
-from orchestrator.src.config import config
+from ..core.state_machine import Session, SpeakerStateStatus
+from .base_service import BaseService, ServiceResult
+from .voice_service import VoiceService, AudioBufferManager
+from .memory_service import MemoryService
+from ..utils.deduplicator import RequestDeduplicator
+from ..config import config
 
 logger = logging.getLogger(__name__)
 
