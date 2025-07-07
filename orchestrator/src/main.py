@@ -785,6 +785,7 @@ async def handle_recognized_conversation(session_id: str, transcript: str):
 
 async def handle_incognito_conversation(transcript: str, session_id: str = "default", audio_data: str = None):
     # Continue passive audio collection for speaker recognition (only if audio_data provided)
+    # This runs in background and doesn't affect response time
     if orchestrator.memory_enabled and orchestrator.voice_service and audio_data:
         try:
             asyncio.create_task(orchestrator.passively_accumulate_speaker_audio(
@@ -795,17 +796,26 @@ async def handle_incognito_conversation(transcript: str, session_id: str = "defa
             # Continue without speaker recognition
     
     # Simplified conversation loop without memory
+    logger.info(f"🎯 Processing incognito conversation for session {session_id}")
+    
+    # Generate response and TTS in parallel when possible
     response = await orchestrator.generate_response(transcript)
+    
+    if not response or not response.strip():
+        logger.error("LLM generated empty response")
+        response = "I'm sorry, I didn't understand that. Could you please try again?"
+    
     audio_data = await orchestrator.synthesize(response)
     
     # Handle TTS errors gracefully
     if not audio_data or len(audio_data) == 0:
-        logger.error("TTS synthesis failed in incognito mode, returning error response")
+        logger.error("TTS synthesis failed in incognito mode, returning text response")
         return JSONResponse({
-            "error": "TTS synthesis failed",
+            "type": "text_response",
             "message": response  # At least provide the text response
-        }, status_code=500)
+        })
     
+    logger.info(f"✅ Incognito conversation completed for session {session_id}")
     return StreamingResponse(io.BytesIO(audio_data), media_type="audio/wav")
 
 async def handle_greeting(session_id: str, audio_data: str):
