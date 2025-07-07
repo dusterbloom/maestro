@@ -808,15 +808,25 @@ async def handle_incognito_conversation(transcript: str):
     return StreamingResponse(io.BytesIO(audio_data), media_type="audio/wav")
 
 async def handle_greeting(session_id: str, audio_data: str):
-    if not audio_data:
-        return JSONResponse({
-            "type": "audio_prompt",
-            "message": "I didn't hear anything. Please speak to start."
-        })
+    try:
+        if not audio_data:
+            return JSONResponse({
+                "type": "audio_prompt",
+                "message": "I didn't hear anything. Please speak to start."
+            })
 
-    embedding = await orchestrator.voice_service.get_embedding(base64.b64decode(audio_data))
-    if not embedding:
-        return JSONResponse({"error": "Failed to generate embedding"}, status_code=500)
+        logger.info(f"🔄 Processing greeting for session {session_id}")
+        embedding = await orchestrator.voice_service.get_embedding(base64.b64decode(audio_data))
+        if not embedding:
+            logger.error(f"❌ Failed to generate embedding for session {session_id}")
+            return JSONResponse({"error": "Failed to generate embedding"}, status_code=500)
+            
+        logger.info(f"✅ Generated embedding for session {session_id}")
+    except Exception as e:
+        logger.error(f"❌ Error in handle_greeting for session {session_id}: {e}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        return JSONResponse({"error": f"Internal error: {str(e)}"}, status_code=500)
 
     speaker_profile = await orchestrator.memory_service.find_speaker_by_embedding(embedding)
 
