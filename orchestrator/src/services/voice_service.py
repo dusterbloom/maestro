@@ -245,7 +245,7 @@ class AudioBufferManager:
 class VoiceService:
     """Enhanced VoiceService with 10-second buffering for definitive speaker recognition using Resemblyzer"""
     
-    def __init__(self):
+    def __init__(self, memory_service=None):
         # Initialize Resemblyzer voice encoder
         logger.info(f"Initializing Resemblyzer VoiceEncoder on device: {config.RESEMBLYZER_DEVICE}")
         self.voice_encoder = VoiceEncoder(device=config.RESEMBLYZER_DEVICE)
@@ -255,6 +255,9 @@ class VoiceService:
         
         # Audio buffer for accumulating 10-second samples
         self.audio_buffer_manager = AudioBufferManager()
+        
+        # Memory service for speaker storage/retrieval
+        self.memory_service = memory_service
         
         # Speaker registry for single-speaker magical recognition
         self.registered_speaker = None  # {"user_id": str, "name": str, "embedding": List[float], "confidence_threshold": float}
