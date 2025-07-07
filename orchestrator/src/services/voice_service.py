@@ -876,6 +876,112 @@ class VoiceService:
         logger.info(f"✅ Audio validation passed: {len(audio_array)} samples, max_amp={max_val:.4f}, duration={duration:.2f}s")
         return True
     
+    def _generate_embedding_from_array_sync(self, audio_array: np.ndarray, sample_rate: int) -> list[float] | None:
+        """Generate Resemblyzer embedding from numpy audio array - synchronous version"""
+        try:
+            # Handle multi-channel audio
+            if audio_array.ndim > 1:
+                if audio_array.shape[1] > 1:  # Stereo/multichannel
+                    audio_array = audio_array.mean(axis=1)  # Average channels
+                    logger.info(f"🔄 Converted multi-channel to mono")
+                else:
+                    audio_array = audio_array.ravel()  # Remove extra dimensions
+            
+            # Calculate original duration
+            duration_seconds = len(audio_array) / sample_rate
+            logger.info(f"📊 Original audio: {len(audio_array)} samples, {duration_seconds:.2f}s")
+            
+            # Check audio energy level before preprocessing
+            audio_rms = np.sqrt(np.mean(audio_array ** 2))
+            audio_db = 20 * np.log10(audio_rms + 1e-8)
+            logger.info(f"🔊 Original audio energy: RMS={audio_rms:.6f}, dB={audio_db:.2f}")
+            
+            # If audio is very quiet, boost it before preprocessing
+            if audio_rms < 0.001:  # Very quiet audio
+                boost_factor = 0.01 / (audio_rms + 1e-8)
+                boost_factor = min(boost_factor, 50)  # Cap boost at 50x
+                audio_array = audio_array * boost_factor
+                new_rms = np.sqrt(np.mean(audio_array ** 2))
+                logger.info(f"🔊 Boosted quiet audio: {audio_rms:.6f} -> {new_rms:.6f} (factor: {boost_factor:.1f}x)")
+            
+            # Use CONSERVATIVE preprocessing to preserve speaker characteristics
+            try:
+                # Try Resemblyzer preprocessing but check if it removes too much
+                preprocessed_test = preprocess_wav(audio_array, sample_rate)
+                retention_ratio = len(preprocessed_test) / len(audio_array) if len(audio_array) > 0 else 0
+                
+                if retention_ratio < 0.3:  # If preprocessing removes more than 70% of audio
+                    logger.warning(f"⚠️ Resemblyzer preprocessing too aggressive ({retention_ratio*100:.1f}% retained), using manual preprocessing")
+                    
+                    # Manual conservative preprocessing
+                    # Just normalize and ensure reasonable amplitude
+                    max_val = np.max(np.abs(audio_array))
+                    if max_val > 0:
+                        preprocessed_wav = audio_array / max_val * 0.5  # Normalize to 50% to avoid clipping
+                    else:
+                        preprocessed_wav = audio_array
+                    
+                    logger.info(f"🔧 Manual preprocessing: {len(preprocessed_wav)} samples retained (100.0%)")
+                else:
+                    preprocessed_wav = preprocessed_test
+                    logger.info(f"🔧 Resemblyzer preprocessing: {len(preprocessed_wav)} samples retained ({retention_ratio*100:.1f}%)")
+                    
+            except Exception as preprocess_error:
+                logger.warning(f"⚠️ Preprocessing failed: {preprocess_error}, using manual normalization")
+                # Fallback to simple normalization
+                max_val = np.max(np.abs(audio_array))
+                if max_val > 0:
+                    preprocessed_wav = audio_array / max_val * 0.5
+                else:
+                    preprocessed_wav = audio_array
+            
+            # Ensure minimum duration for Resemblyzer (at least 1.6 seconds)
+            min_samples = int(1.6 * sample_rate)  # Resemblyzer minimum
+            if len(preprocessed_wav) < min_samples:
+                logger.info(f"📏 Extending audio from {len(preprocessed_wav)} to {min_samples} samples")
+                
+                if len(preprocessed_wav) > 0:
+                    # Repeat the audio instead of padding with zeros
+                    repetitions = (min_samples // len(preprocessed_wav)) + 1
+                    extended_audio = np.tile(preprocessed_wav, repetitions)[:min_samples]
+                    preprocessed_wav = extended_audio
+                    logger.info(f"🔄 Extended by repeating audio pattern")
+                else:
+                    # Last resort: create minimal test tone
+                    t = np.linspace(0, 1.6, min_samples)
+                    preprocessed_wav = 0.01 * np.sin(2 * np.pi * 440 * t)  # 440Hz tone
+                    logger.warning(f"⚠️ Created fallback test tone")
+            
+            # Final validation of preprocessed audio
+            final_rms = np.sqrt(np.mean(preprocessed_wav ** 2))
+            final_db = 20 * np.log10(final_rms + 1e-8)
+            
+            if final_rms < 1e-6:  # Still too quiet after all processing
+                logger.error(f"❌ Final audio still too quiet: RMS={final_rms:.8f}, dB={final_db:.2f}")
+                return None
+            
+            # Generate embedding using Resemblyzer - THE BLOCKING OPERATION
+            embedding = self.voice_encoder.embed_utterance(preprocessed_wav)
+            
+            # Convert numpy array to list for JSON serialization
+            embedding_list = embedding.tolist()
+            
+            logger.info(f"✅ Successfully generated Resemblyzer embedding:")
+            logger.info(f"   → Original duration: {duration_seconds:.2f}s")
+            logger.info(f"   → Processed duration: {len(preprocessed_wav)/sample_rate:.2f}s")
+            logger.info(f"   → Sample rate: {sample_rate}Hz")
+            logger.info(f"   → Final audio dB: {final_db:.2f}")
+            logger.info(f"   → Embedding dimensions: {len(embedding_list)}")
+            logger.info(f"   → Embedding vector norm: {np.linalg.norm(embedding):.4f}")
+            
+            return embedding_list
+            
+        except Exception as e:
+            logger.error(f"❌ Embedding generation failed: {e}")
+            import traceback
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+            return None
+    
     async def _generate_embedding_from_array(self, audio_array: np.ndarray, sample_rate: int) -> list[float] | None:
         """Generate Resemblyzer embedding from numpy audio array with robust preprocessing"""
         try:
