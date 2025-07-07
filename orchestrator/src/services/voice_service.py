@@ -7,7 +7,7 @@ import json
 import redis
 from concurrent.futures import ThreadPoolExecutor
 from resemblyzer import VoiceEncoder
-from orchestrator.src.config import config
+from ..config import config
 import soundfile as sf
 
 logger = logging.getLogger(__name__)
