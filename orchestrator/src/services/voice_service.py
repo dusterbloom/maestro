@@ -650,7 +650,7 @@ class VoiceService:
             logger.info("Thread pool executor shutdown")
 
     async def get_embedding(self, audio_data: bytes) -> list[float] | None:
-        """Get embedding using Resemblyzer from audio data (supports both WAV and raw formats)"""
+        """Get embedding using Resemblyzer from audio data (supports both WAV and raw formats) - NON-BLOCKING"""
         try:
             logger.info(f"🎤 Generating speaker embedding from {len(audio_data)} bytes of audio using Resemblyzer...")
             
@@ -659,15 +659,24 @@ class VoiceService:
                 logger.error("❌ Audio data too small to be valid")
                 return None
             
-            # Check if this is actually WAV data or raw audio samples
-            is_wav_format = self._detect_wav_format(audio_data)
+            # Run the CPU-intensive embedding generation in thread pool with timeout
+            loop = asyncio.get_event_loop()
             
-            if is_wav_format:
-                logger.info("📁 Detected WAV format, using WAV parsing")
-                return await self._process_wav_audio(audio_data)
-            else:
-                logger.info("🎵 Detected raw audio samples, using raw processing")
-                return await self._process_raw_audio(audio_data)
+            try:
+                # Use asyncio.wait_for to add timeout protection
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        self.executor,
+                        self._generate_embedding_sync,
+                        audio_data
+                    ),
+                    timeout=self.embedding_timeout
+                )
+                return result
+                
+            except asyncio.TimeoutError:
+                logger.error(f"❌ Embedding generation timed out after {self.embedding_timeout}s")
+                return None
                 
         except Exception as e:
             logger.error(f"❌ Error generating Resemblyzer embedding: {e}")
