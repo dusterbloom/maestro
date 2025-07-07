@@ -286,8 +286,8 @@ class VoiceOrchestrator:
         
         # Speaker embedding services with agentic system (ENHANCED)
         if self.memory_enabled:
-            self.voice_service = VoiceService()
             self.memory_service = MemoryService()
+            self.voice_service = VoiceService(memory_service=self.memory_service)
             # Initialize agentic speaker system
             self.agentic_speaker_system = AgenticSpeakerSystem(self.voice_service, self.memory_service)
         else:
