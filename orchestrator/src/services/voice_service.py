@@ -670,17 +670,15 @@ class VoiceService:
             start_time = time.time()
             
             try:
-                # Create a task for embedding generation
-                task = asyncio.create_task(
+                # Use asyncio.wait_for directly with run_in_executor (no need for create_task)
+                result = await asyncio.wait_for(
                     loop.run_in_executor(
                         self.executor,
                         self._generate_embedding_sync,
                         audio_data
-                    )
+                    ),
+                    timeout=self.embedding_timeout
                 )
-                
-                # Use asyncio.wait_for to add timeout protection
-                result = await asyncio.wait_for(task, timeout=self.embedding_timeout)
                 
                 elapsed_time = time.time() - start_time
                 logger.info(f"✅ Embedding generation completed in {elapsed_time:.2f}s")
@@ -689,10 +687,6 @@ class VoiceService:
             except asyncio.TimeoutError:
                 elapsed_time = time.time() - start_time
                 logger.error(f"❌ Embedding generation timed out after {elapsed_time:.2f}s (limit: {self.embedding_timeout}s)")
-                # Cancel the task to stop the background operation
-                if 'task' in locals() and not task.done():
-                    task.cancel()
-                    logger.info(f"🚫 Cancelled timed-out embedding task")
                 return None
                 
         except Exception as e:
