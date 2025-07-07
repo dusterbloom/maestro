@@ -225,31 +225,21 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError, ses
               // Include audio data ONLY ONCE per session for speaker identification
               if (!speakerAudioSent && lastRecordedAudioRef.current) {
                 try {
+                  // Convert ArrayBuffer to base64 safely for large buffers (FULL 10 SECONDS)
                   const audioBytes = new Uint8Array(lastRecordedAudioRef.current);
                   
-                  // Send only last 2 seconds to prevent massive JSON
-                  // 16kHz * 2 seconds * 4 bytes (float32) = ~128KB instead of 640KB
-                  const sampleRate = 16000;
-                  const secondsToSend = 2;
-                  const bytesPerSample = 4; // float32
-                  const maxBytes = sampleRate * secondsToSend * bytesPerSample;
-                  
-                  const audioToSend = audioBytes.length > maxBytes 
-                    ? audioBytes.slice(-maxBytes) // Take last 2 seconds
-                    : audioBytes; // Use all if less than 2 seconds
-                  
-                  // Use chunks to avoid "Maximum call stack size exceeded" error  
+                  // Use chunks to avoid "Maximum call stack size exceeded" error
                   let binary = '';
                   const chunkSize = 8192;
-                  for (let i = 0; i < audioToSend.length; i += chunkSize) {
-                    const chunk = audioToSend.slice(i, i + chunkSize);
+                  for (let i = 0; i < audioBytes.length; i += chunkSize) {
+                    const chunk = audioBytes.slice(i, i + chunkSize);
                     binary += String.fromCharCode.apply(null, Array.from(chunk));
                   }
                   
                   const audioBase64 = btoa(binary);
                   requestBody.audio_data = audioBase64;
                   setSpeakerAudioSent(true); // Never send audio data again for this session
-                  console.log(`🎭 FIRST TIME: Including audio (${audioToSend.length} bytes, ~${secondsToSend}s) for speaker recognition`);
+                  console.log(`🎭 FIRST TIME: Including full 10-second audio buffer for definitive speaker recognition`);
                 } catch (error) {
                   console.warn('Failed to include audio data:', error);
                   // Continue without audio data
