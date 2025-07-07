@@ -740,39 +740,80 @@ async def interrupt_tts_endpoint(request: InterruptRequest):
 
 @app.post("/ultra-fast-stream")
 async def ultra_fast_stream(request: TranscriptRequest):
-    """🚀 REAL-TIME STREAMING with State Machine"""
+    """🚀 REAL-TIME STREAMING with Server-Sent Events returning JSON with base64 audio"""
     session_id = request.session_id
     transcript = request.transcript
     audio_data = request.audio_data
 
-    state = conversation_manager.get_state(session_id)
+    # Start embeddings in background immediately (non-blocking)
+    if orchestrator.memory_enabled and orchestrator.voice_service and audio_data:
+        asyncio.create_task(orchestrator.passively_accumulate_speaker_audio(
+            base64.b64decode(audio_data), session_id
+        ))
 
-    if transcript.lower().strip() == "musica maestro":
-        conversation_manager.set_state(session_id, ConversationState.INCOGNITO)
-        return JSONResponse({
-            "type": "system",
-            "message": "Entering incognito mode. No data will be saved."
-        })
+    async def generate_sse_response():
+        """Generate Server-Sent Events with JSON containing base64 audio"""
+        try:
+            # Generate response immediately (don't wait for embeddings)
+            response = await orchestrator.generate_response(transcript)
+            
+            if not response or not response.strip():
+                response = "I'm sorry, I didn't understand that. Could you please try again?"
+            
+            # Generate TTS audio
+            audio_bytes = await orchestrator.synthesize(response)
+            
+            if audio_bytes and len(audio_bytes) > 0:
+                # Convert audio to base64 for JSON transport
+                import base64
+                audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+                
+                # Send as single sentence event (matches frontend expectation)
+                event_data = {
+                    "type": "sentence_audio",
+                    "sequence": 1,
+                    "text": response,
+                    "audio_data": audio_base64
+                }
+                
+                yield f"data: {json.dumps(event_data)}\n\n"
+                
+                # Send completion event
+                completion_data = {
+                    "type": "complete",
+                    "total_sentences": 1,
+                    "full_text": response
+                }
+                yield f"data: {json.dumps(completion_data)}\n\n"
+                
+            else:
+                # TTS failed - send error event
+                error_data = {
+                    "type": "error",
+                    "message": "TTS synthesis failed",
+                    "text_response": response
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
+                
+        except Exception as e:
+            logger.error(f"❌ SSE generation error: {e}")
+            error_data = {
+                "type": "error", 
+                "message": str(e)
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
 
-    if state == ConversationState.INCOGNITO:
-        # Handle incognito conversation
-        return await handle_incognito_conversation(transcript, session_id, audio_data)
-
-    if state == ConversationState.GREETING:
-        # Handle initial interaction
-        return await handle_greeting(session_id, audio_data)
-
-    if state == ConversationState.ENROLLING:
-        return await handle_enrollment(session_id, audio_data)
-
-    if state == ConversationState.CONFIRMING_ENROLLMENT:
-        return await handle_enrollment_confirmation(session_id, transcript)
-
-    if state == ConversationState.RECOGNIZED:
-        return await handle_recognized_conversation(session_id, transcript)
-
-    # ... other states to be implemented
-    return JSONResponse({"error": "Invalid state"}, status_code=500)
+    # Return Server-Sent Events response
+    return StreamingResponse(
+        generate_sse_response(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control"
+        }
+    )
 
 async def handle_recognized_conversation(session_id: str, transcript: str):
     session_data = conversation_manager.get_session_data(session_id)
