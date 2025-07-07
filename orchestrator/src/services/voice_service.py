@@ -642,6 +642,12 @@ class VoiceService:
         """Clear registered speaker (for testing/reset)"""
         self.registered_speaker = None
         logger.info("Cleared registered speaker")
+    
+    def cleanup(self):
+        """Clean up resources (thread pool executor)"""
+        if hasattr(self, 'executor') and self.executor:
+            self.executor.shutdown(wait=False)
+            logger.info("Thread pool executor shutdown")
 
     async def get_embedding(self, audio_data: bytes) -> list[float] | None:
         """Get embedding using Resemblyzer from audio data (supports both WAV and raw formats)"""
