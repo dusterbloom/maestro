@@ -1,8 +1,8 @@
 import logging
 import ollama
-from orchestrator.src.config import config
-from orchestrator.src.services.base_service import BaseService, ServiceResult
-from orchestrator.src.core.state_machine import Session
+from ..config import config
+from .base_service import BaseService, ServiceResult
+from ..core.state_machine import Session
 
 logger = logging.getLogger(__name__)
 
