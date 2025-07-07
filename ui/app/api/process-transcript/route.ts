@@ -36,10 +36,10 @@ export async function POST(request: NextRequest) {
         }
       });
     } else {
-      // 🔄 BATCH MODE (original behavior)
-      console.log('🔄 Using batch mode endpoint');
+      // 🔄 FALLBACK MODE - Use streaming endpoint for non-streaming requests too
+      console.log('🔄 Using streaming endpoint in non-streaming mode');
       
-      const response = await fetch(`${orchestratorUrl}/ultra-fast`, {
+      const response = await fetch(`${orchestratorUrl}/ultra-fast-stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -51,31 +51,60 @@ export async function POST(request: NextRequest) {
         throw new Error(`Orchestrator error: ${response.status}`);
       }
       
-      const data = await response.json();
+      // Parse SSE response to extract audio data
+      if (!response.body) {
+        throw new Error('No response stream available');
+      }
       
-      // Transform the response to match expected format
-      if (data.audio_data) {
-        const transformedData = {
-          type: 'wav_audio',
-          data: data.audio_data,
-          response_text: data.response_text,
-          latency_ms: data.latency_ms
-        };
-        return NextResponse.json(transformedData);
-      } else if (data.sentence_complete === false) {
-        // Sentence not complete - this is normal, not an error
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let audioData = '';
+      let responseText = '';
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+        
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+          
+          // Process complete lines
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // Keep incomplete line
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                
+                if (data.type === 'sentence_audio') {
+                  audioData = data.audio_data;
+                  responseText = data.text;
+                } else if (data.type === 'error') {
+                  throw new Error(data.message);
+                }
+              } catch (e) {
+                console.error('Failed to parse SSE data:', e);
+              }
+            }
+          }
+        }
+      }
+      
+      if (audioData) {
         return NextResponse.json({
-          type: 'incomplete',
-          message: 'Sentence not complete',
-          response_text: data.response_text || '',
-          latency_ms: data.latency_ms || 0
+          type: 'wav_audio',
+          data: audioData,
+          response_text: responseText,
+          latency_ms: 0
         });
       } else {
-        // Return error if no audio data and sentence was supposed to be complete
         return NextResponse.json({
           type: 'error',
           message: 'No audio data received from TTS service',
-          response_text: data.response_text || 'Error occurred'
+          response_text: responseText || 'Error occurred'
         });
       }
     }
