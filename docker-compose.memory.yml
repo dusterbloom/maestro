@@ -12,8 +12,6 @@ services:
       - LLM_MODEL=${LLM_MODEL:-gemma3n:latest}
       - TTS_VOICE=${TTS_VOICE:-af_bella}
     depends_on:
-      chromadb:
-        condition: service_healthy
       redis:
         condition: service_started
       whisper-live:
