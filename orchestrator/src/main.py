@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import uuid
@@ -28,18 +27,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         while websocket.client_state != WebSocketState.DISCONNECTED:
             try:
                 data = await websocket.receive_json()
-                # Here you would handle incoming events from the client
-                # For example, dispatching them to different services
-                # based on the event type.
-                logger.info(f"Received event from {session_id}: {data}")
-                # Example of dispatching an event back to the client
-                await event_dispatcher.dispatch_event(session_id, {"status": "received", "data": data})
+                await session_manager.handle_event(session_id, data)
             except WebSocketDisconnect:
                 logger.info(f"WebSocket disconnected for session: {session_id}")
                 break
             except Exception as e:
                 logger.error(f"Error in WebSocket loop for session {session_id}: {e}")
-                # Decide if you want to disconnect on error
+                await event_dispatcher.dispatch_event(session_id, {"type": "session.error", "data": {"message": str(e)}})
                 break
     finally:
         session_manager.handle_disconnect(session_id)
@@ -48,13 +42,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 @app.get("/health")
 async def health():
     """Health check endpoint"""
-    return {"status": "ok"}
+    active_sessions = len(state_machine._sessions)
+    return {"status": "ok", "active_sessions": active_sessions}
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup"""
     logger.info("Voice Orchestrator starting up...")
-    # Here you would initialize your services, e.g., connecting to databases, etc.
+    # Service initialization will go here in the next phase
 
 @app.on_event("shutdown")
 async def shutdown_event():
