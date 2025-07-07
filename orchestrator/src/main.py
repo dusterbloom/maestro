@@ -5,9 +5,9 @@ import uuid
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
-from orchestrator.src.core.state_machine import StateMachine
-from orchestrator.src.core.event_dispatcher import EventDispatcher
-from orchestrator.src.core.session_manager import SessionManager
+from core.state_machine import StateMachine
+from core.event_dispatcher import EventDispatcher
+from core.session_manager import SessionManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
