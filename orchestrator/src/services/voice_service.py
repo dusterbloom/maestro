@@ -270,7 +270,7 @@ class VoiceService:
         self.registration_confidence = 0.8  # Confidence for auto-registration
         
         # Timeout for embedding operations (configurable)
-        self.embedding_timeout = float(os.getenv("SPEAKER_EMBEDDING_TIMEOUT", "10.0"))
+        self.embedding_timeout = config.SPEAKER_EMBEDDING_TIMEOUT
     
     def on_speaker_event(self, event_type: str):
         """Decorator to register event handlers"""
