@@ -57,6 +57,7 @@ class Config:
     # Resemblyzer Speaker Recognition Settings
     SPEAKER_SIMILARITY_THRESHOLD: float = float(os.getenv("SPEAKER_SIMILARITY_THRESHOLD", "0.7"))
     RESEMBLYZER_DEVICE: str = os.getenv("RESEMBLYZER_DEVICE", "cpu")  # "cpu" or "cuda"
+    SPEAKER_EMBEDDING_TIMEOUT: float = float(os.getenv("SPEAKER_EMBEDDING_TIMEOUT", "10.0"))  # seconds
 
 # Single config instance
 config = Config()
