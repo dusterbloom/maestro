@@ -6,6 +6,7 @@ import io
 import wave
 import tempfile
 import logging
+import os
 from collections import deque
 from typing import Optional, Dict, List
 from dataclasses import dataclass, asdict
