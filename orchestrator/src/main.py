@@ -826,10 +826,20 @@ async def handle_greeting(session_id: str, audio_data: str):
         
         # Move directly to conversation - speaker ID will happen in background
         conversation_manager.set_state(session_id, ConversationState.INCOGNITO)
-        return JSONResponse({
-            "type": "conversation_ready",
-            "message": "Hello! I'm ready to chat. What can I help you with?"
-        })
+        
+        # Generate welcome audio immediately without waiting for speaker identification
+        welcome_message = "Hello! I'm ready to chat. What can I help you with?"
+        audio_data = await orchestrator.synthesize(welcome_message)
+        
+        # Handle TTS errors gracefully
+        if not audio_data or len(audio_data) == 0:
+            logger.error("TTS synthesis failed for greeting, returning text response")
+            return JSONResponse({
+                "type": "conversation_ready",
+                "message": welcome_message
+            })
+        
+        return StreamingResponse(io.BytesIO(audio_data), media_type="audio/wav")
         
     except Exception as e:
         logger.error(f"❌ Error in handle_greeting for session {session_id}: {e}")
