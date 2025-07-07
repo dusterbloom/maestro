@@ -7,6 +7,8 @@ import wave
 import tempfile
 import logging
 import os
+import json
+import redis
 from collections import deque
 from typing import Optional, Dict, List
 from dataclasses import dataclass, asdict
