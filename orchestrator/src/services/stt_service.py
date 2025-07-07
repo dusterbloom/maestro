@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import websockets
-from orchestrator.src.config import config
+from ..config import config
 
 logger = logging.getLogger(__name__)
 
