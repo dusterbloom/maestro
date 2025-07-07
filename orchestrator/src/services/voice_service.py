@@ -11,6 +11,7 @@ from typing import Optional, Dict, List
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from config import config
+import soundfile as sf
 
 # Resemblyzer imports
 from resemblyzer import VoiceEncoder, preprocess_wav
@@ -80,7 +81,7 @@ class AudioBufferManager:
         return int16_array.tobytes()
     
     def get_buffer_as_wav(self, apply_vad: bool = True, vad_threshold: float = None) -> bytes:
-        """Get current buffer as WAV file bytes for Diglett with optional VAD filtering"""
+        """Get current buffer as WAV file bytes for Resemblyzer with optional VAD filtering"""
         if not self.audio_buffer:
             return b""
             
@@ -98,19 +99,43 @@ class AudioBufferManager:
             logger.info(f"🎤 VAD filtering: {len(float_array)} -> {len(voice_active_samples)} samples ({len(voice_active_samples)/len(float_array)*100:.1f}% retained)")
             float_array = voice_active_samples
         
-        # Convert to int16 PCM
-        int16_array = (float_array * 32767).astype(np.int16)
+        # Validate audio data
+        if len(float_array) == 0:
+            logger.error("❌ Empty audio array after processing")
+            return b""
         
-        # Create WAV file in memory
+        # Normalize audio to prevent clipping
+        max_val = np.max(np.abs(float_array))
+        if max_val > 1.0:
+            float_array = float_array / max_val
+            logger.info(f"🔧 Normalized audio: max was {max_val:.4f}")
+        
+        # Convert to int16 PCM with proper scaling
+        int16_array = np.clip(float_array * 32767, -32767, 32767).astype(np.int16)
+        
+        # Create WAV file in memory using proper wave library
         wav_buffer = io.BytesIO()
-        with wave.open(wav_buffer, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(self.sample_rate)  # 16kHz
-            wav_file.writeframes(int16_array.tobytes())
-        
-        wav_buffer.seek(0)
-        return wav_buffer.read()
+        try:
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(self.sample_rate)  # 16kHz
+                wav_file.writeframes(int16_array.tobytes())
+            
+            wav_buffer.seek(0)
+            wav_bytes = wav_buffer.read()
+            
+            # Validate WAV file size
+            if len(wav_bytes) < 44:  # WAV header is 44 bytes minimum
+                logger.error(f"❌ Generated WAV too small: {len(wav_bytes)} bytes")
+                return b""
+            
+            logger.info(f"✅ Generated WAV: {len(wav_bytes)} bytes ({len(int16_array)} samples)")
+            return wav_bytes
+            
+        except Exception as wav_error:
+            logger.error(f"❌ WAV creation failed: {wav_error}")
+            return b""
     
     def _extract_voice_segments(self, audio_array: np.ndarray, 
                                threshold: float = None, 
@@ -253,7 +278,7 @@ class VoiceService:
                 logger.error(f"Event handler error for {event.event_type}: {e}")
     
     async def accumulate_audio_chunk(self, audio_chunk: bytes, session_id: str) -> Optional[Dict]:
-        """Accumulate audio chunk and check for speaker when 10 seconds reached"""
+        """Accumulate audio chunk and check for speaker when 10 seconds reached (NON-BLOCKING)"""
         try:
             # Convert bytes to float32 array
             float_array = np.frombuffer(audio_chunk, dtype=np.float32)
@@ -262,22 +287,19 @@ class VoiceService:
             buffer_ready = self.audio_buffer_manager.add_audio_chunk(float_array)
             
             if buffer_ready:
-                # We have 10 seconds - perform definitive speaker recognition
-                wav_bytes = self.audio_buffer_manager.get_buffer_as_wav()
+                # We have 10 seconds - start NON-BLOCKING speaker recognition
+                logger.info(f"🚀 Starting NON-BLOCKING speaker recognition for session {session_id}")
                 
-                # Get embedding using WAV format
-                embedding = await self.get_embedding(wav_bytes)
-                if not embedding:
-                    self.audio_buffer_manager.clear_buffer()
-                    return None
+                # Start background task without awaiting (non-blocking)
+                asyncio.create_task(self._perform_nonblocking_speaker_identification(session_id))
                 
-                # Check for speaker recognition with definitive result
-                result = await self._identify_or_register_speaker_definitively(embedding, session_id)
-                
-                # Clear buffer for next accumulation
-                self.audio_buffer_manager.clear_buffer()
-                
-                return result
+                # Return immediately with buffering status
+                return {
+                    "status": "processing_started",
+                    "message": "Speaker identification started in background",
+                    "session_id": session_id,
+                    "buffer_duration": 10.0
+                }
             
             # Not ready yet - return buffer status  
             duration = self.audio_buffer_manager.get_buffer_duration_seconds()
@@ -291,6 +313,50 @@ class VoiceService:
         except Exception as e:
             logger.error(f"Error accumulating audio: {e}")
             return None
+    
+    async def _perform_nonblocking_speaker_identification(self, session_id: str):
+        """🚀 NON-BLOCKING: Perform speaker identification without blocking conversation"""
+        try:
+            logger.info(f"🔄 Background speaker identification starting for session {session_id}")
+            
+            # Get audio data from buffer without VAD preprocessing to keep full 10 seconds
+            wav_bytes = self.audio_buffer_manager.get_buffer_as_wav(apply_vad=False)  # Keep full duration
+            
+            if not wav_bytes:
+                logger.error(f"❌ No audio data available for session {session_id}")
+                return
+            
+            # Get embedding using full audio duration
+            embedding = await self.get_embedding(wav_bytes)
+            if not embedding:
+                logger.error(f"❌ Failed to generate embedding for session {session_id}")
+                # Clear buffer and return
+                self.audio_buffer_manager.clear_buffer()
+                return
+            
+            # Check if this speaker was already identified to avoid duplicates
+            if self.registered_speaker:
+                stored_embedding = self.registered_speaker["embedding"]
+                similarity = self._calculate_similarity(embedding, stored_embedding)
+                
+                if similarity >= self.confidence_threshold:
+                    logger.info(f"✅ Session {session_id} - SAME SPEAKER recognized with confidence {similarity:.4f}")
+                    # Don't create new registration, just update session state
+                    self.audio_buffer_manager.clear_buffer()
+                    return
+            
+            # Perform identification or registration
+            result = await self._identify_or_register_speaker_definitively(embedding, session_id)
+            
+            # Clear buffer after processing
+            self.audio_buffer_manager.clear_buffer()
+            
+            logger.info(f"✅ Background speaker identification completed for session {session_id}: {result}")
+            
+        except Exception as e:
+            logger.error(f"❌ Background speaker identification failed for session {session_id}: {e}")
+            # Always clear buffer on error
+            self.audio_buffer_manager.clear_buffer()
     
     async def _identify_or_register_speaker_definitively(self, embedding: List[float], session_id: str) -> Dict:
         """Definitively identify existing speaker or register new one with ChromaDB storage"""
@@ -570,47 +636,252 @@ class VoiceService:
         logger.info("Cleared registered speaker")
 
     async def get_embedding(self, audio_data: bytes) -> list[float] | None:
-        """Get embedding using Resemblyzer from WAV audio data"""
+        """Get embedding using Resemblyzer from audio data (supports both WAV and raw formats)"""
         try:
-            logger.info(f"🎤 Generating speaker embedding from {len(audio_data)} bytes of WAV audio using Resemblyzer...")
+            logger.info(f"🎤 Generating speaker embedding from {len(audio_data)} bytes of audio using Resemblyzer...")
             
-            # Create temporary file for Resemblyzer (it expects file path)
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                temp_file.write(audio_data)
-                temp_file_path = temp_file.name
+            # Validate input audio data
+            if len(audio_data) < 1000:  # At least 1KB for valid audio
+                logger.error("❌ Audio data too small to be valid")
+                return None
             
-            try:
-                # Convert to Path object and preprocess
-                wav_path = Path(temp_file_path)
-                
-                # Preprocess the audio (Resemblyzer's preprocessing)
-                wav = preprocess_wav(wav_path)
-                
-                # Generate embedding using Resemblyzer
-                embedding = self.voice_encoder.embed_utterance(wav)
-                
-                # Convert numpy array to list for JSON serialization
-                embedding_list = embedding.tolist()
-                
-                # Calculate average dB for logging (similar to what Diglett did)
-                audio_rms = np.sqrt(np.mean(wav ** 2))
-                avg_db = 20 * np.log10(audio_rms + 1e-8)  # Add small epsilon to avoid log(0)
-                
-                logger.info(f"✅ Successfully generated Resemblyzer embedding:")
-                logger.info(f"   → Embedding dimensions: {len(embedding_list)}")
-                logger.info(f"   → Average dB: {avg_db:.2f}")
-                logger.info(f"   → Embedding vector norm: {np.linalg.norm(embedding):.4f}")
-                
-                return embedding_list
-                
-            finally:
-                # Clean up temporary file
-                try:
-                    Path(temp_file_path).unlink()
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to clean up temp file: {cleanup_error}")
+            # Check if this is actually WAV data or raw audio samples
+            is_wav_format = self._detect_wav_format(audio_data)
             
+            if is_wav_format:
+                logger.info("📁 Detected WAV format, using WAV parsing")
+                return await self._process_wav_audio(audio_data)
+            else:
+                logger.info("🎵 Detected raw audio samples, using raw processing")
+                return await self._process_raw_audio(audio_data)
+                
         except Exception as e:
             logger.error(f"❌ Error generating Resemblyzer embedding: {e}")
             logger.error(f"❌ Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+            return None
+    
+    def _detect_wav_format(self, audio_data: bytes) -> bool:
+        """Detect if audio data is in WAV format or raw samples"""
+        if len(audio_data) < 12:
+            return False
+        
+        # Check for WAV header: 'RIFF' + size + 'WAVE'
+        header = audio_data[:12]
+        is_wav = (
+            header[:4] == b'RIFF' and 
+            header[8:12] == b'WAVE'
+        )
+        
+        if is_wav:
+            logger.info("✅ Valid WAV header detected")
+        else:
+            logger.info(f"🔍 Not WAV format - header: {header[:16]}")
+        
+        return is_wav
+    
+    async def _process_wav_audio(self, wav_data: bytes) -> list[float] | None:
+        """Process audio data that's already in WAV format"""
+        try:
+            # Create temporary file for WAV data
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                temp_file.write(wav_data)
+                temp_file_path = temp_file.name
+            
+            try:
+                # Read WAV file using soundfile
+                audio_array, sample_rate = sf.read(temp_file_path, dtype='float32')
+                logger.info(f"📊 Read WAV: shape={audio_array.shape}, sr={sample_rate}")
+                
+                return await self._generate_embedding_from_array(audio_array, sample_rate)
+                
+            finally:
+                Path(temp_file_path).unlink()
+                
+        except Exception as e:
+            logger.error(f"❌ WAV processing failed: {e}")
+            return None
+    
+    async def _process_raw_audio(self, raw_data: bytes) -> list[float] | None:
+        """Process raw audio samples (float32 or int16)"""
+        try:
+            # Try to interpret as float32 samples (most likely from browser)
+            sample_rate = 16000  # Default sample rate
+            
+            # Check if data length is consistent with float32
+            if len(raw_data) % 4 == 0:  # float32 = 4 bytes per sample
+                logger.info("🔄 Attempting float32 interpretation...")
+                try:
+                    audio_array = np.frombuffer(raw_data, dtype=np.float32)
+                    logger.info(f"📊 Float32 interpretation: {len(audio_array)} samples")
+                    
+                    # Validate the audio data
+                    if self._validate_audio_array(audio_array):
+                        return await self._generate_embedding_from_array(audio_array, sample_rate)
+                        
+                except Exception as float32_error:
+                    logger.warning(f"⚠️ Float32 interpretation failed: {float32_error}")
+            
+            # Try to interpret as int16 samples
+            if len(raw_data) % 2 == 0:  # int16 = 2 bytes per sample
+                logger.info("🔄 Attempting int16 interpretation...")
+                try:
+                    int16_array = np.frombuffer(raw_data, dtype=np.int16)
+                    # Convert to float32 and normalize
+                    audio_array = int16_array.astype(np.float32) / 32767.0
+                    logger.info(f"📊 Int16 interpretation: {len(audio_array)} samples")
+                    
+                    # Validate the audio data
+                    if self._validate_audio_array(audio_array):
+                        return await self._generate_embedding_from_array(audio_array, sample_rate)
+                        
+                except Exception as int16_error:
+                    logger.warning(f"⚠️ Int16 interpretation failed: {int16_error}")
+            
+            logger.error("❌ Could not interpret raw audio data as float32 or int16")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Raw audio processing failed: {e}")
+            return None
+    
+    def _validate_audio_array(self, audio_array: np.ndarray) -> bool:
+        """Validate that audio array looks reasonable"""
+        if len(audio_array) == 0:
+            logger.error("❌ Empty audio array")
+            return False
+        
+        # Check for reasonable amplitude range
+        max_val = np.max(np.abs(audio_array))
+        if max_val == 0:
+            logger.error("❌ Silent audio (all zeros)")
+            return False
+        
+        if max_val > 100:  # Likely not normalized properly
+            logger.warning(f"⚠️ Unusually high amplitude: {max_val}")
+        
+        # Check for reasonable duration (at least 0.1 seconds)
+        duration = len(audio_array) / 16000  # Assume 16kHz
+        if duration < 0.1:
+            logger.warning(f"⚠️ Very short audio: {duration:.3f}s")
+        
+        logger.info(f"✅ Audio validation passed: {len(audio_array)} samples, max_amp={max_val:.4f}, duration={duration:.2f}s")
+        return True
+    
+    async def _generate_embedding_from_array(self, audio_array: np.ndarray, sample_rate: int) -> list[float] | None:
+        """Generate Resemblyzer embedding from numpy audio array with robust preprocessing"""
+        try:
+            # Handle multi-channel audio
+            if audio_array.ndim > 1:
+                if audio_array.shape[1] > 1:  # Stereo/multichannel
+                    audio_array = audio_array.mean(axis=1)  # Average channels
+                    logger.info(f"🔄 Converted multi-channel to mono")
+                else:
+                    audio_array = audio_array.ravel()  # Remove extra dimensions
+            
+            # Calculate original duration
+            duration_seconds = len(audio_array) / sample_rate
+            logger.info(f"📊 Original audio: {len(audio_array)} samples, {duration_seconds:.2f}s")
+            
+            # Check audio energy level before preprocessing
+            audio_rms = np.sqrt(np.mean(audio_array ** 2))
+            audio_db = 20 * np.log10(audio_rms + 1e-8)
+            logger.info(f"🔊 Original audio energy: RMS={audio_rms:.6f}, dB={audio_db:.2f}")
+            
+            # If audio is very quiet, boost it before preprocessing
+            if audio_rms < 0.001:  # Very quiet audio
+                boost_factor = 0.01 / (audio_rms + 1e-8)
+                boost_factor = min(boost_factor, 50)  # Cap boost at 50x
+                audio_array = audio_array * boost_factor
+                new_rms = np.sqrt(np.mean(audio_array ** 2))
+                logger.info(f"🔊 Boosted quiet audio: {audio_rms:.6f} -> {new_rms:.6f} (factor: {boost_factor:.1f}x)")
+            
+            # Use CONSERVATIVE preprocessing to preserve speaker characteristics
+            try:
+                # Try Resemblyzer preprocessing but check if it removes too much
+                preprocessed_test = preprocess_wav(audio_array, sample_rate)
+                retention_ratio = len(preprocessed_test) / len(audio_array) if len(audio_array) > 0 else 0
+                
+                if retention_ratio < 0.3:  # If preprocessing removes more than 70% of audio
+                    logger.warning(f"⚠️ Resemblyzer preprocessing too aggressive ({retention_ratio*100:.1f}% retained), using manual preprocessing")
+                    
+                    # Manual conservative preprocessing
+                    # Just normalize and ensure reasonable amplitude
+                    max_val = np.max(np.abs(audio_array))
+                    if max_val > 0:
+                        preprocessed_wav = audio_array / max_val * 0.5  # Normalize to 50% to avoid clipping
+                    else:
+                        preprocessed_wav = audio_array
+                    
+                    logger.info(f"🔧 Manual preprocessing: {len(preprocessed_wav)} samples retained (100.0%)")
+                else:
+                    preprocessed_wav = preprocessed_test
+                    logger.info(f"🔧 Resemblyzer preprocessing: {len(preprocessed_wav)} samples retained ({retention_ratio*100:.1f}%)")
+                    
+            except Exception as preprocess_error:
+                logger.warning(f"⚠️ Preprocessing failed: {preprocess_error}, using manual normalization")
+                # Fallback to simple normalization
+                max_val = np.max(np.abs(audio_array))
+                if max_val > 0:
+                    preprocessed_wav = audio_array / max_val * 0.5
+                else:
+                    preprocessed_wav = audio_array
+            
+            # Ensure minimum duration for Resemblyzer (at least 1.6 seconds)
+            min_samples = int(1.6 * sample_rate)  # Resemblyzer minimum
+            if len(preprocessed_wav) < min_samples:
+                logger.info(f"📏 Extending audio from {len(preprocessed_wav)} to {min_samples} samples")
+                
+                if len(preprocessed_wav) > 0:
+                    # Repeat the audio instead of padding with zeros
+                    repetitions = (min_samples // len(preprocessed_wav)) + 1
+                    extended_audio = np.tile(preprocessed_wav, repetitions)[:min_samples]
+                    preprocessed_wav = extended_audio
+                    logger.info(f"🔄 Extended by repeating audio pattern")
+                else:
+                    # Last resort: create minimal test tone
+                    t = np.linspace(0, 1.6, min_samples)
+                    preprocessed_wav = 0.01 * np.sin(2 * np.pi * 440 * t)  # 440Hz tone
+                    logger.warning(f"⚠️ Created fallback test tone")
+            
+            # Final validation of preprocessed audio
+            final_rms = np.sqrt(np.mean(preprocessed_wav ** 2))
+            final_db = 20 * np.log10(final_rms + 1e-8)
+            
+            if final_rms < 1e-6:  # Still too quiet after all processing
+                logger.error(f"❌ Final audio still too quiet: RMS={final_rms:.8f}, dB={final_db:.2f}")
+                return None
+            
+            # Generate embedding using Resemblyzer
+            embedding = self.voice_encoder.embed_utterance(preprocessed_wav)
+            
+            # Convert numpy array to list for JSON serialization
+            embedding_list = embedding.tolist()
+            
+            logger.info(f"✅ Successfully generated Resemblyzer embedding:")
+            logger.info(f"   → Original duration: {duration_seconds:.2f}s")
+            logger.info(f"   → Processed duration: {len(preprocessed_wav)/sample_rate:.2f}s")
+            logger.info(f"   → Sample rate: {sample_rate}Hz")
+            logger.info(f"   → Final audio dB: {final_db:.2f}")
+            logger.info(f"   → Embedding dimensions: {len(embedding_list)}")
+            logger.info(f"   → Embedding vector norm: {np.linalg.norm(embedding):.4f}")
+            
+            return embedding_list
+            
+        except Exception as e:
+            logger.error(f"❌ Embedding generation failed: {e}")
+            import traceback
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+            return None
+            logger.info(f"   → Embedding dimensions: {len(embedding_list)}")
+            logger.info(f"   → Average dB: {avg_db:.2f}")
+            logger.info(f"   → Embedding vector norm: {np.linalg.norm(embedding):.4f}")
+            
+            return embedding_list
+            
+        except Exception as e:
+            logger.error(f"❌ Embedding generation failed: {e}")
+            import traceback
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             return None

@@ -3,9 +3,12 @@ import base64
 import json
 import logging
 import os
+import io
 import time
 import re
+import numpy as np
 from typing import Optional
+import uuid
 import httpx
 import ollama
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -459,7 +462,6 @@ Key behaviors:
             buffer_manager = self.session_audio_buffers[session_id]
             
             # Convert audio bytes to float32 array and add to session buffer
-            import numpy as np
             float_array = np.frombuffer(audio_data, dtype=np.float32)
             buffer_ready = buffer_manager.add_audio_chunk(float_array)
             
@@ -542,25 +544,68 @@ Key behaviors:
         return None
     
     async def _perform_background_speaker_identification(self, session_id: str, buffer_manager):
-        """🚀 NON-BLOCKING: Perform speaker identification in background"""
+        """🚀 NON-BLOCKING: Perform speaker identification in background with duplicate prevention"""
         try:
             logger.info(f"🔄 Background speaker identification starting for session {session_id}")
             
-            # Get WAV format audio for Diglett
-            wav_bytes = buffer_manager.get_buffer_as_wav()
+            # Check if already processing/completed to avoid duplicates
+            current_state = self.session_speaker_states.get(session_id, {})
+            if current_state.get("status") in ["identified", "completed"]:
+                logger.info(f"⏭️ Session {session_id} already processed, skipping duplicate")
+                return
             
-            # Get embedding from Diglett
-            embedding = await self.voice_service.get_embedding(wav_bytes)
-            if not embedding:
-                logger.error(f"❌ Background identification failed - no embedding for session {session_id}")
-                # Keep as guest but mark as completed
+            # Get audio data without VAD to preserve full 10 seconds
+            wav_bytes = buffer_manager.get_buffer_as_wav(apply_vad=False)
+            
+            if not wav_bytes:
+                logger.error(f"❌ No audio data available for session {session_id}")
                 self.session_speaker_states[session_id] = {
                     "status": "completed", 
                     "speaker_info": {"user_id": "guest", "name": "Friend", "is_new": False}
                 }
                 return
             
-            # Perform definitive identification
+            # Check if we already have a registered speaker to avoid multiple registrations
+            if hasattr(self.voice_service, 'registered_speaker') and self.voice_service.registered_speaker:
+                logger.info(f"🔍 Checking against existing registered speaker")
+                
+                # Get embedding for comparison
+                embedding = await self.voice_service.get_embedding(wav_bytes)
+                if embedding:
+                    stored_embedding = self.voice_service.registered_speaker["embedding"]
+                    similarity = self.voice_service._calculate_similarity(embedding, stored_embedding)
+                    
+                    if similarity >= self.voice_service.confidence_threshold:
+                        # Same speaker - no need to register again
+                        existing_speaker = self.voice_service.registered_speaker
+                        result = {
+                            "status": "identified",
+                            "user_id": existing_speaker["user_id"],
+                            "name": existing_speaker["name"],
+                            "confidence": similarity,
+                            "is_definitive": True,
+                            "greeting": f"Welcome back, {existing_speaker['name']}!"
+                        }
+                        
+                        self.session_speaker_states[session_id] = {
+                            "status": "identified",
+                            "speaker_info": result
+                        }
+                        
+                        logger.info(f"✅ Session {session_id} - SAME SPEAKER identified (confidence: {similarity:.4f})")
+                        return
+            
+            # New speaker or no existing registration - proceed with full identification
+            embedding = await self.voice_service.get_embedding(wav_bytes)
+            if not embedding:
+                logger.error(f"❌ Background identification failed - no embedding for session {session_id}")
+                self.session_speaker_states[session_id] = {
+                    "status": "completed", 
+                    "speaker_info": {"user_id": "guest", "name": "Friend", "is_new": False}
+                }
+                return
+            
+            # Perform definitive identification or registration
             result = await self.voice_service._identify_or_register_speaker_definitively(embedding, session_id)
             
             # Store result in session state
@@ -569,13 +614,23 @@ Key behaviors:
                 "speaker_info": result
             }
             
-            # Get agentic context
+            # Get agentic context if available
             if self.agentic_speaker_system and result.get("status") in ["identified", "registered"]:
                 agentic_context = self.agentic_speaker_system.get_current_speaker_context()
                 if agentic_context:
                     result["greeting"] = agentic_context
                     # Update cached result
                     self.session_speaker_states[session_id]["speaker_info"] = result
+            
+            logger.info(f"✅ Background speaker identification completed for session {session_id}: {result.get('status', 'unknown')}")
+            
+        except Exception as e:
+            logger.error(f"❌ Background speaker identification failed for session {session_id}: {e}")
+            # Fallback to guest
+            self.session_speaker_states[session_id] = {
+                "status": "completed",
+                "speaker_info": {"user_id": "guest", "name": "Friend", "is_new": False}
+            }
             
             logger.info(f"✅ Background speaker identification completed for session {session_id}: {result}")
             
@@ -711,16 +766,45 @@ async def ultra_fast_stream(request: TranscriptRequest):
 async def handle_recognized_conversation(session_id: str, transcript: str):
     session_data = conversation_manager.get_session_data(session_id)
     user_id = session_data.get("user_id")
-    # TODO: Load user context from memory
     
-    response = await orchestrator.generate_response(transcript, context=f"User ID: {user_id}")
+    # Load conversation history
+    history = await orchestrator.memory_service.get_user_memory(user_id, "conversation")
+    context = "\n".join([f"User: {item['user']}\nAssistant: {item['assistant']}" for item in history])
+
+    response = await orchestrator.generate_response(transcript, context=context)
+    
+    # Save current exchange to memory
+    await orchestrator.memory_service.add_user_memory(user_id, {
+        "event_type": "conversation",
+        "user": transcript,
+        "assistant": response
+    })
+
     audio_data = await orchestrator.synthesize(response)
+    
+    # Handle TTS errors gracefully
+    if not audio_data or len(audio_data) == 0:
+        logger.error("TTS synthesis failed, returning error response")
+        return JSONResponse({
+            "error": "TTS synthesis failed",
+            "message": response  # At least provide the text response
+        }, status_code=500)
+    
     return StreamingResponse(io.BytesIO(audio_data), media_type="audio/wav")
 
 async def handle_incognito_conversation(transcript: str):
     # Simplified conversation loop without memory
     response = await orchestrator.generate_response(transcript)
     audio_data = await orchestrator.synthesize(response)
+    
+    # Handle TTS errors gracefully
+    if not audio_data or len(audio_data) == 0:
+        logger.error("TTS synthesis failed in incognito mode, returning error response")
+        return JSONResponse({
+            "error": "TTS synthesis failed",
+            "message": response  # At least provide the text response
+        }, status_code=500)
+    
     return StreamingResponse(io.BytesIO(audio_data), media_type="audio/wav")
 
 async def handle_greeting(session_id: str, audio_data: str):
@@ -738,11 +822,10 @@ async def handle_greeting(session_id: str, audio_data: str):
 
     if speaker_profile:
         conversation_manager.set_state(session_id, ConversationState.RECOGNIZED)
-        conversation_manager.set_session_data(session_id, {"user_id": speaker_profile})
-        # TODO: Load user context
+        conversation_manager.set_session_data(session_id, {"user_id": speaker_profile["user_id"]})
         return JSONResponse({
             "type": "recognized_speaker",
-            "message": f"Welcome back, {speaker_profile}!" # Replace with actual name
+            "message": f"Welcome back, {speaker_profile['name']}!"
         })
     else:
         conversation_manager.set_state(session_id, ConversationState.ENROLLING)

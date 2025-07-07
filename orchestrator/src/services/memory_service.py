@@ -32,10 +32,13 @@ class MemoryService:
                 else:
                     raise # Re-raise the last exception if all retries fail
 
-    async def find_speaker_by_embedding(self, embedding: list[float]) -> str | None:
+    async def find_speaker_by_embedding(self, embedding: list[float]) -> dict | None:
         results = self.collection.query(query_embeddings=[embedding], n_results=1)
         if results and results["ids"][0]:
-            return results["ids"][0][0]
+            user_id = results["ids"][0][0]
+            profile = await self.get_speaker_profile(user_id)
+            if profile:
+                return {"user_id": user_id, "name": profile.get("name", "Friend")}
         return None
 
     async def create_speaker_profile(self, embedding: list[float]) -> str:
@@ -87,3 +90,9 @@ class MemoryService:
         await self.redis_client.lpush(memory_key, memory_json)
         # Keep only last 100 memories per event type
         await self.redis_client.ltrim(memory_key, 0, 99)
+
+    async def get_user_memory(self, user_id: str, event_type: str = "general") -> list[dict]:
+        """Get user's memory for a specific event type"""
+        memory_key = f"memory:{user_id}:{event_type}"
+        memory_json_list = await self.redis_client.lrange(memory_key, 0, -1)
+        return [json.loads(memory_json) for memory_json in memory_json_list]
