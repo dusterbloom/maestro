@@ -339,25 +339,45 @@ class VoiceOrchestrator:
     
     async def synthesize(self, text: str) -> bytes:
         """Convert text to speech using Kokoro TTS with optimized parameters"""
+        if not text or not text.strip():
+            logger.warning("Empty text provided to TTS")
+            return b""
+            
         try:
-            async with httpx.AsyncClient(timeout=config.OLLAMA_TIMEOUT) as client:
+            start_time = time.time()
+            
+            # Optimize TTS request with connection pooling and reduced timeout
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=2.0, read=10.0, write=5.0, pool=None),
+                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+            ) as client:
                 response = await client.post(
                     f"{self.tts_url}/v1/audio/speech",  # Correct Kokoro endpoint
                     json={
                         "model": "kokoro",  # Required parameter from source
-                        "input": text,
+                        "input": text[:500],  # Limit text length for faster processing
                         "voice": config.TTS_VOICE,
-                        "response_format": "wav",  # Keep WAV for non-streaming
+                        "response_format": "wav",  # Keep WAV for compatibility
                         "stream": False,
                         "speed": config.TTS_SPEED,
                         "volume_multiplier": config.TTS_VOLUME
                     }
                 )
                 response.raise_for_status()
+                
+                elapsed = time.time() - start_time
+                audio_size = len(response.content)
+                logger.info(f"✅ TTS completed in {elapsed:.2f}s - {audio_size} bytes")
+                
                 return response.content
                 
+        except asyncio.TimeoutError:
+            elapsed = time.time() - start_time
+            logger.error(f"❌ TTS timeout after {elapsed:.2f}s")
+            return b""
         except Exception as e:
-            logger.error(f"TTS synthesis error: {e}")
+            elapsed = time.time() - start_time
+            logger.error(f"❌ TTS synthesis error after {elapsed:.2f}s: {e}")
             return b""
 
     async def stream_llm_tokens(self, text: str, context: str = ""):
