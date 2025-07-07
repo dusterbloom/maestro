@@ -2,15 +2,15 @@ import asyncio
 import logging
 import base64
 from fastapi import WebSocket
-from .state_machine import StateMachine, ConnectionState, AudioStateStatus, Session
-from .event_dispatcher import EventDispatcher, Event
-from ..services.stt_service import STTService
-from ..services.speaker_service import SpeakerService
-from ..services.conversation_service import ConversationService
-from ..services.tts_service import TTSService
-from ..services.voice_service import VoiceService
-from ..services.memory_service import MemoryService
-from ..utils.deduplicator import RequestDeduplicator
+from core.state_machine import StateMachine, ConnectionState, AudioStateStatus, Session
+from core.event_dispatcher import EventDispatcher, Event
+from services.stt_service import STTService
+from services.speaker_service import SpeakerService
+from services.conversation_service import ConversationService
+from services.tts_service import TTSService
+from services.voice_service import VoiceService
+from services.memory_service import MemoryService
+from utils.deduplicator import RequestDeduplicator
 
 logger = logging.getLogger(__name__)
 
