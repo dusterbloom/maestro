@@ -719,7 +719,7 @@ class VoiceService:
             logger.info("Thread pool executor shutdown")
 
     async def get_embedding(self, audio_data: bytes) -> list[float] | None:
-        """Get embedding using Resemblyzer from audio data (supports both WAV and raw formats) - NON-BLOCKING"""
+        """Get embedding using Resemblyzer from audio data (supports both WAV and raw formats) - NON-BLOCKING with Redis cache"""
         try:
             logger.info(f"🎤 Generating speaker embedding from {len(audio_data)} bytes of audio using Resemblyzer...")
             
@@ -727,6 +727,14 @@ class VoiceService:
             if len(audio_data) < 1000:  # At least 1KB for valid audio
                 logger.error("❌ Audio data too small to be valid")
                 return None
+            
+            # Check cache first for performance optimization
+            audio_hash = self._get_audio_hash(audio_data)
+            cached_embedding = await self._get_cached_embedding(audio_hash)
+            
+            if cached_embedding:
+                logger.info(f"⚡ Using cached embedding (hash: {audio_hash}) - INSTANT response!")
+                return cached_embedding
             
             # Run the CPU-intensive embedding generation in thread pool with timeout
             loop = asyncio.get_event_loop()
