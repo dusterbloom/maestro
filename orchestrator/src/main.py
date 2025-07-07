@@ -770,15 +770,25 @@ async def ultra_fast_stream(request: TranscriptRequest):
 
     async def generate_sse_response():
         """Generate Server-Sent Events with JSON containing base64 audio"""
+        start_time = time.time()
         try:
+            logger.info(f"🚀 Processing request for session {session_id}: {transcript[:50]}...")
+            
             # Generate response immediately (don't wait for embeddings)
+            llm_start = time.time()
             response = await orchestrator.generate_response(transcript)
+            llm_time = time.time() - llm_start
             
             if not response or not response.strip():
                 response = "I'm sorry, I didn't understand that. Could you please try again?"
             
             # Generate TTS audio
+            tts_start = time.time()
             audio_bytes = await orchestrator.synthesize(response)
+            tts_time = time.time() - tts_start
+            
+            total_time = time.time() - start_time
+            logger.info(f"⚡ Response timing - LLM: {llm_time:.2f}s, TTS: {tts_time:.2f}s, Total: {total_time:.2f}s")
             
             if audio_bytes and len(audio_bytes) > 0:
                 # Convert audio to base64 for JSON transport
@@ -813,7 +823,8 @@ async def ultra_fast_stream(request: TranscriptRequest):
                 yield f"data: {json.dumps(error_data)}\n\n"
                 
         except Exception as e:
-            logger.error(f"❌ SSE generation error: {e}")
+            total_time = time.time() - start_time
+            logger.error(f"❌ SSE generation error after {total_time:.2f}s: {e}")
             error_data = {
                 "type": "error", 
                 "message": str(e)
