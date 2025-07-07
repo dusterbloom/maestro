@@ -3,8 +3,8 @@ import asyncio
 import logging
 import time
 import httpx
-from orchestrator.src.config import config
-from orchestrator.src.services.base_service import BaseService, ServiceResult
+from ..config import config
+from .base_service import BaseService, ServiceResult
 
 logger = logging.getLogger(__name__)
 
