@@ -262,6 +262,11 @@ class VoiceService:
         # Memory service for speaker storage/retrieval
         self.memory_service = memory_service
         
+        # Redis embedding cache for performance optimization
+        self.redis_client = None
+        self.embedding_cache_ttl = 86400  # 24 hours cache TTL
+        self._initialize_redis_cache()
+        
         # Speaker registry for single-speaker magical recognition
         self.registered_speaker = None  # {"user_id": str, "name": str, "embedding": List[float], "confidence_threshold": float}
         
