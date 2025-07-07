@@ -685,6 +685,25 @@ class VoiceService:
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             return None
     
+    def _generate_embedding_sync(self, audio_data: bytes) -> list[float] | None:
+        """Synchronous embedding generation - runs in thread pool"""
+        try:
+            # Check if this is actually WAV data or raw audio samples
+            is_wav_format = self._detect_wav_format(audio_data)
+            
+            if is_wav_format:
+                logger.info("📁 Detected WAV format, using WAV parsing")
+                return self._process_wav_audio_sync(audio_data)
+            else:
+                logger.info("🎵 Detected raw audio samples, using raw processing")
+                return self._process_raw_audio_sync(audio_data)
+                
+        except Exception as e:
+            logger.error(f"❌ Synchronous embedding generation failed: {e}")
+            import traceback
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+            return None
+    
     def _detect_wav_format(self, audio_data: bytes) -> bool:
         """Detect if audio data is in WAV format or raw samples"""
         if len(audio_data) < 12:
