@@ -745,11 +745,17 @@ async def ultra_fast_stream(request: TranscriptRequest):
     transcript = request.transcript
     audio_data = request.audio_data
 
-    # Start embeddings in background immediately (non-blocking)
+    # Start embeddings in background FIRE-AND-FORGET (absolutely no blocking)
     if orchestrator.memory_enabled and orchestrator.voice_service and audio_data:
-        asyncio.create_task(orchestrator.passively_accumulate_speaker_audio(
-            base64.b64decode(audio_data), session_id
-        ))
+        try:
+            # Fire and forget - don't wait for this
+            asyncio.create_task(orchestrator.passively_accumulate_speaker_audio(
+                base64.b64decode(audio_data), session_id
+            ))
+        except Exception as e:
+            # Silently ignore embedding errors - never block conversation
+            logger.warning(f"Embedding task failed to start: {e}")
+            pass
 
     async def generate_sse_response():
         """Generate Server-Sent Events with JSON containing base64 audio"""
