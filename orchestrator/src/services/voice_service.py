@@ -723,6 +723,28 @@ class VoiceService:
         
         return is_wav
     
+    def _process_wav_audio_sync(self, wav_data: bytes) -> list[float] | None:
+        """Process audio data that's already in WAV format - synchronous version"""
+        try:
+            # Create temporary file for WAV data
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                temp_file.write(wav_data)
+                temp_file_path = temp_file.name
+            
+            try:
+                # Read WAV file using soundfile
+                audio_array, sample_rate = sf.read(temp_file_path, dtype='float32')
+                logger.info(f"📊 Read WAV: shape={audio_array.shape}, sr={sample_rate}")
+                
+                return self._generate_embedding_from_array_sync(audio_array, sample_rate)
+                
+            finally:
+                Path(temp_file_path).unlink()
+                
+        except Exception as e:
+            logger.error(f"❌ WAV processing failed: {e}")
+            return None
+    
     async def _process_wav_audio(self, wav_data: bytes) -> list[float] | None:
         """Process audio data that's already in WAV format"""
         try:
