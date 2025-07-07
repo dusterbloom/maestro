@@ -755,6 +755,11 @@ class VoiceService:
                 
                 elapsed_time = time.time() - start_time
                 logger.info(f"✅ Embedding generation completed in {elapsed_time:.2f}s")
+                
+                # Cache the result for future use
+                if result:
+                    await self._cache_embedding(audio_hash, result)
+                
                 return result
                 
             except asyncio.TimeoutError:
