@@ -666,6 +666,9 @@ class VoiceService:
             # Run the CPU-intensive embedding generation in thread pool with timeout
             loop = asyncio.get_event_loop()
             
+            logger.info(f"🔄 Starting embedding generation in thread pool...")
+            start_time = time.time()
+            
             try:
                 # Use asyncio.wait_for to add timeout protection
                 result = await asyncio.wait_for(
@@ -676,14 +679,19 @@ class VoiceService:
                     ),
                     timeout=self.embedding_timeout
                 )
+                
+                elapsed_time = time.time() - start_time
+                logger.info(f"✅ Embedding generation completed in {elapsed_time:.2f}s")
                 return result
                 
             except asyncio.TimeoutError:
-                logger.error(f"❌ Embedding generation timed out after {self.embedding_timeout}s")
+                elapsed_time = time.time() - start_time
+                logger.error(f"❌ Embedding generation timed out after {elapsed_time:.2f}s (limit: {self.embedding_timeout}s)")
                 return None
                 
         except Exception as e:
-            logger.error(f"❌ Error generating Resemblyzer embedding: {e}")
+            elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
+            logger.error(f"❌ Error generating Resemblyzer embedding after {elapsed_time:.2f}s: {e}")
             logger.error(f"❌ Exception type: {type(e).__name__}")
             import traceback
             logger.error(f"❌ Full traceback: {traceback.format_exc()}")
