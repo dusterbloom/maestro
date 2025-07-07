@@ -767,6 +767,49 @@ class VoiceService:
             logger.error(f"❌ WAV processing failed: {e}")
             return None
     
+    def _process_raw_audio_sync(self, raw_data: bytes) -> list[float] | None:
+        """Process raw audio samples (float32 or int16) - synchronous version"""
+        try:
+            # Try to interpret as float32 samples (most likely from browser)
+            sample_rate = 16000  # Default sample rate
+            
+            # Check if data length is consistent with float32
+            if len(raw_data) % 4 == 0:  # float32 = 4 bytes per sample
+                logger.info("🔄 Attempting float32 interpretation...")
+                try:
+                    audio_array = np.frombuffer(raw_data, dtype=np.float32)
+                    logger.info(f"📊 Float32 interpretation: {len(audio_array)} samples")
+                    
+                    # Validate the audio data
+                    if self._validate_audio_array(audio_array):
+                        return self._generate_embedding_from_array_sync(audio_array, sample_rate)
+                        
+                except Exception as float32_error:
+                    logger.warning(f"⚠️ Float32 interpretation failed: {float32_error}")
+            
+            # Try to interpret as int16 samples
+            if len(raw_data) % 2 == 0:  # int16 = 2 bytes per sample
+                logger.info("🔄 Attempting int16 interpretation...")
+                try:
+                    int16_array = np.frombuffer(raw_data, dtype=np.int16)
+                    # Convert to float32 and normalize
+                    audio_array = int16_array.astype(np.float32) / 32767.0
+                    logger.info(f"📊 Int16 interpretation: {len(audio_array)} samples")
+                    
+                    # Validate the audio data
+                    if self._validate_audio_array(audio_array):
+                        return self._generate_embedding_from_array_sync(audio_array, sample_rate)
+                        
+                except Exception as int16_error:
+                    logger.warning(f"⚠️ Int16 interpretation failed: {int16_error}")
+            
+            logger.error("❌ Could not interpret raw audio data as float32 or int16")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Raw audio processing failed: {e}")
+            return None
+    
     async def _process_raw_audio(self, raw_data: bytes) -> list[float] | None:
         """Process raw audio samples (float32 or int16)"""
         try:
