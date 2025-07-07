@@ -3,7 +3,8 @@ import logging
 import numpy as np
 from core.state_machine import Session, SpeakerStateStatus
 from services.base_service import BaseService, ServiceResult
-from services.voice_service import VoiceService, AudioBufferManager
+from utils.audio_buffer import AudioBufferManager
+from services.voice_service import VoiceService
 from services.memory_service import MemoryService
 from utils.deduplicator import RequestDeduplicator
 from config import config
