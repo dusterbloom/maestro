@@ -745,17 +745,28 @@ async def ultra_fast_stream(request: TranscriptRequest):
     transcript = request.transcript
     audio_data = request.audio_data
 
-    # Start embeddings in background FIRE-AND-FORGET (absolutely no blocking)
+    # ONLY start embeddings if NOT already processing for this session (prevent duplicates)
     if orchestrator.memory_enabled and orchestrator.voice_service and audio_data:
-        try:
-            # Fire and forget - don't wait for this
-            asyncio.create_task(orchestrator.passively_accumulate_speaker_audio(
-                base64.b64decode(audio_data), session_id
-            ))
-        except Exception as e:
-            # Silently ignore embedding errors - never block conversation
-            logger.warning(f"Embedding task failed to start: {e}")
-            pass
+        # Check if embedding already running/completed for this session
+        session_state = orchestrator.session_speaker_states.get(session_id, {})
+        embedding_status = session_state.get("status", "not_started")
+        
+        if embedding_status == "not_started":
+            try:
+                # Mark as started immediately to prevent duplicates
+                orchestrator.session_speaker_states[session_id] = {"status": "accumulating"}
+                logger.info(f"🎯 Starting embedding for session {session_id} (first time)")
+                
+                # Fire and forget - don't wait for this
+                asyncio.create_task(orchestrator.passively_accumulate_speaker_audio(
+                    base64.b64decode(audio_data), session_id
+                ))
+            except Exception as e:
+                # Reset status on error
+                orchestrator.session_speaker_states[session_id] = {"status": "not_started"}
+                logger.warning(f"Embedding task failed to start: {e}")
+        else:
+            logger.info(f"⏭️ Skipping embedding for session {session_id} (status: {embedding_status})")
 
     async def generate_sse_response():
         """Generate Server-Sent Events with JSON containing base64 audio"""
