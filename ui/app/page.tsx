@@ -13,21 +13,9 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string>('');
 
   useEffect(() => {
-    const startConversation = async () => {
-      try {
-        const response = await fetch('/api/start-conversation', { method: 'POST' });
-        const data = await response.json();
-        setSessionId(data.session_id);
-
-        const utterance = new SpeechSynthesisUtterance(data.greeting);
-        speechSynthesis.speak(utterance);
-      } catch (err) {
-        setError('Failed to start conversation.');
-        setStatus('error');
-      }
-    };
-
-    startConversation();
+    // The session is now initiated by the WebSocket connection in VoiceButton.
+    // A session ID is generated on the client and passed to the component.
+    setSessionId(`session_${Date.now()}`);
   }, []);
 
   const handleTranscript = (newTranscript: string) => {
