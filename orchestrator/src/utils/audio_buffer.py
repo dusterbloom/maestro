@@ -5,7 +5,7 @@ import io
 import wave
 from collections import deque
 import logging
-from orchestrator.src.config import config
+from config import config
 
 logger = logging.getLogger(__name__)
 
