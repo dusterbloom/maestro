@@ -61,29 +61,13 @@ class STTService:
                 data = json.loads(message)
                 logger.info(f"STTService received raw data for session {self.session_id}: {data}")
                 
-                # Check for segments and extract transcript - only process completed segments
+                # Check for segments and extract transcript
                 if data.get("segments"):
                     segments = data.get("segments")
                     logger.info(f"STTService found {len(segments)} segments for session {self.session_id}")
                     
-                    # Only process completed segments to avoid endless loops
-                    completed_segments = [s for s in segments if s.get('completed', False)]
-                    
-                    if completed_segments:
-                        transcript = " ".join([s['text'] for s in completed_segments]).strip()
-                        logger.info(f"STTService extracted transcript from {len(completed_segments)} completed segments for session {self.session_id}: '{transcript}'")
-                        
-                        if transcript:
-                            logger.info(f"STTService sending transcript.final event for session {self.session_id}")
-                            # Fire an event back to the SessionManager
-                            await self.event_callback({
-                                "type": "transcript.final",
-                                "data": {"transcript": transcript}
-                            })
-                        else:
-                            logger.warning(f"STTService empty transcript after joining completed segments for session {self.session_id}")
-                    else:
-                        logger.info(f"STTService no completed segments yet for session {self.session_id} - waiting for speech completion")
+                    # Process segments intelligently - don't rely on 'completed' flag
+                    await self._process_segments_intelligently(segments)
                 else:
                     logger.info(f"STTService no segments found in data for session {self.session_id}")
                     
@@ -93,6 +77,87 @@ class STTService:
                 break
             except Exception as e:
                 logger.error(f"Error in STTService listener for session {self.session_id}: {e}")
+
+    async def _process_segments_intelligently(self, segments):
+        """
+        Process segments without relying on 'completed' flag.
+        Uses intelligent detection based on text stability and timing.
+        """
+        if not segments:
+            return
+            
+        # Get the latest segment
+        latest_segment = segments[-1]
+        segment_text = latest_segment.get('text', '').strip()
+        
+        # Skip empty segments
+        if not segment_text:
+            logger.debug(f"STTService skipping empty segment for session {self.session_id}")
+            return
+            
+        current_time = time.time()
+        
+        # Check if this is a genuinely new or significantly different segment
+        if segment_text != self.last_segment_text:
+            logger.info(f"STTService new segment text for session {self.session_id}: '{segment_text}'")
+            self.last_segment_text = segment_text
+            self.last_segment_time = current_time
+            
+            # Cancel any pending timer
+            if self.pending_segment_timer:
+                self.pending_segment_timer.cancel()
+            
+            # Set up new timer for segment completion
+            self.pending_segment_timer = asyncio.create_task(
+                self._complete_segment_after_delay(segment_text, self.segment_stability_duration)
+            )
+        else:
+            # Same text, check if enough time has passed for natural completion
+            time_since_last = current_time - self.last_segment_time
+            
+            # If segment text is stable for a reasonable period AND contains meaningful content, complete it
+            if time_since_last >= self.segment_stability_duration and len(segment_text.split()) >= 2:
+                logger.info(f"STTService segment stable for {time_since_last:.2f}s, completing: '{segment_text}'")
+                await self._send_completed_transcript(segment_text)
+                
+                # Reset tracking
+                self.last_segment_text = ""
+                self.last_segment_time = 0
+                
+                # Cancel pending timer
+                if self.pending_segment_timer:
+                    self.pending_segment_timer.cancel()
+                    self.pending_segment_timer = None
+
+    async def _complete_segment_after_delay(self, segment_text: str, delay: float):
+        """Complete a segment after a delay if no new updates arrive"""
+        try:
+            await asyncio.sleep(delay)
+            
+            # If we reach here, the segment hasn't been updated for 'delay' seconds
+            if segment_text == self.last_segment_text and len(segment_text.split()) >= 2:
+                logger.info(f"STTService auto-completing stable segment after {delay}s: '{segment_text}'")
+                await self._send_completed_transcript(segment_text)
+                
+                # Reset tracking
+                self.last_segment_text = ""
+                self.last_segment_time = 0
+                self.pending_segment_timer = None
+                
+        except asyncio.CancelledError:
+            logger.debug(f"STTService segment completion timer cancelled for session {self.session_id}")
+
+    async def _send_completed_transcript(self, transcript: str):
+        """Send a completed transcript to the session manager"""
+        if transcript and transcript.strip():
+            logger.info(f"STTService sending transcript.final event for session {self.session_id}: '{transcript}'")
+            # Fire an event back to the SessionManager
+            await self.event_callback({
+                "type": "transcript.final",
+                "data": {"transcript": transcript.strip()}
+            })
+        else:
+            logger.warning(f"STTService attempted to send empty transcript for session {self.session_id}")
 
     async def send_audio(self, audio_chunk: bytes):
         if self.is_connected:
