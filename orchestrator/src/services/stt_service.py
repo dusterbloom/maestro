@@ -25,7 +25,7 @@ class STTService:
                 "language": "en",
                 "task": "transcribe",
                 "model": config.STT_MODEL,
-                "use_vad": True,
+                "use_vad": False,
             }
             logger.info(f"STTService sending config: {config_msg}")
             await self.websocket.send(json.dumps(config_msg))
