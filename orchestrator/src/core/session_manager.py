@@ -97,52 +97,76 @@ class SessionManager:
 
         session.transition_audio(AudioStateStatus.PROCESSING)
         
-        # LLM Processing
+        # Start LLM and TTS in parallel for ultra-low latency
         llm_start = time.time()
-        logger.info(f"Starting LLM processing for session {session.session_id}")
-        llm_result = await self.conversation_service.process(transcript, {"session": session})
-        llm_duration = time.time() - llm_start
-        logger.info(f"LLM processing completed in {llm_duration:.3f}s for session {session.session_id}")
+        logger.info(f"Starting streaming LLM processing for session {session.session_id}")
         
-        if not llm_result.success:
-            logger.error(f"LLM processing failed for session {session.session_id}: {llm_result.error}")
-            await self.event_dispatcher.dispatch_event(session.session_id, Event(type="session.error", data={"message": llm_result.error}))
-            session.transition_audio(AudioStateStatus.IDLE)
-            return
-
-        response_text = llm_result.data
-        logger.info(f"LLM response for session {session.session_id}: '{response_text}'")
+        # Create streaming LLM task
+        async def stream_llm_to_tts():
+            """Stream LLM tokens directly to TTS as they arrive"""
+            client = ollama.AsyncClient(host=self.conversation_service.ollama_url)
+            response = await client.generate(
+                model=config.LLM_MODEL,
+                prompt=self.conversation_service._build_prompt(transcript, session.conversation_history, 
+                                                             self.conversation_service._get_agentic_greeting(session)),
+                stream=True,
+                options={
+                    "num_predict": config.LLM_MAX_TOKENS,
+                    "temperature": config.LLM_TEMPERATURE,
+                }
+            )
+            
+            # Stream tokens and build sentences for immediate TTS
+            sentence_buffer = ""
+            full_response = ""
+            sentence_endings = ['.', '!', '?', '\n']
+            
+            async for chunk in response:
+                if 'response' in chunk:
+                    token = chunk['response']
+                    sentence_buffer += token
+                    full_response += token
+                    
+                    # Check for sentence completion
+                    if any(ending in token for ending in sentence_endings) and len(sentence_buffer.strip()) > 10:
+                        # Send complete sentence to TTS immediately
+                        logger.info(f"🚀 Streaming sentence to TTS: '{sentence_buffer.strip()}'")
+                        tts_result = await self.tts_service.process(sentence_buffer.strip())
+                        
+                        if tts_result.success:
+                            # Dispatch audio chunk immediately
+                            await self.event_dispatcher.dispatch_event(session.session_id, Event(
+                                type="response.audio.chunk",
+                                data={"audio_chunk": base64.b64encode(tts_result.data).decode('utf-8')}
+                            ))
+                        
+                        sentence_buffer = ""  # Reset for next sentence
+            
+            # Handle any remaining text
+            if sentence_buffer.strip():
+                logger.info(f"🚀 Final sentence to TTS: '{sentence_buffer.strip()}'")
+                tts_result = await self.tts_service.process(sentence_buffer.strip())
+                if tts_result.success:
+                    await self.event_dispatcher.dispatch_event(session.session_id, Event(
+                        type="response.audio.chunk",
+                        data={"audio_chunk": base64.b64encode(tts_result.data).decode('utf-8')}
+                    ))
+            
+            # Update conversation history
+            session.conversation_history.append({"role": "user", "content": transcript})
+            session.conversation_history.append({"role": "assistant", "content": full_response})
+            
+            return full_response
         
-        # TTS Processing
-        tts_start = time.time()
-        logger.info(f"Starting TTS processing for session {session.session_id}")
-        tts_result = await self.tts_service.process(response_text)
-        tts_duration = time.time() - tts_start
-        logger.info(f"TTS processing completed in {tts_duration:.3f}s for session {session.session_id}")
+        try:
+            session.transition_audio(AudioStateStatus.PLAYING)
+            full_response = await stream_llm_to_tts()
+            total_duration = time.time() - start_time
+            logger.info(f"🚀 ULTRA-LOW LATENCY pipeline completed in {total_duration:.3f}s for session {session.session_id}")
+            logger.info(f"LLM response for session {session.session_id}: '{full_response}'")
+            
+        except Exception as e:
+            logger.error(f"Streaming pipeline failed for session {session.session_id}: {e}")
+            await self.event_dispatcher.dispatch_event(session.session_id, Event(type="session.error", data={"message": str(e)}))
         
-        if not tts_result.success:
-            logger.error(f"TTS processing failed for session {session.session_id}: {tts_result.error}")
-            await self.event_dispatcher.dispatch_event(session.session_id, Event(type="session.error", data={"message": tts_result.error}))
-            session.transition_audio(AudioStateStatus.IDLE)
-            return
-
-        session.transition_audio(AudioStateStatus.PLAYING)
-        audio_chunk_size = len(tts_result.data)
-        
-        # Audio Dispatch with connection validation
-        dispatch_start = time.time()
-        logger.info(f"Dispatching audio chunk of {audio_chunk_size} bytes to session {session.session_id}")
-        dispatch_success = await self.event_dispatcher.dispatch_event(session.session_id, Event(
-            type="response.audio.chunk",
-            data={"audio_chunk": base64.b64encode(tts_result.data).decode('utf-8')}
-        ))
-        dispatch_duration = time.time() - dispatch_start
-        
-        if not dispatch_success:
-            logger.error(f"Failed to dispatch audio to session {session.session_id} - connection lost during processing")
-        else:
-            logger.info(f"Audio successfully dispatched to session {session.session_id}")
-        
-        total_duration = time.time() - start_time
-        logger.info(f"Complete pipeline for session {session.session_id}: Total={total_duration:.3f}s (LLM={llm_duration:.3f}s, TTS={tts_duration:.3f}s, Dispatch={dispatch_duration:.3f}s)")
         session.transition_audio(AudioStateStatus.IDLE)
