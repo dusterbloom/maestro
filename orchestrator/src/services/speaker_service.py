@@ -63,9 +63,10 @@ class SpeakerService(BaseService):
         
         wav_bytes = buffer_manager.get_buffer_as_wav(apply_vad=True)
         if not wav_bytes:
-            logger.error(f"Could not get WAV bytes from buffer for session {session.session_id}")
+            logger.warning(f"VAD rejected audio for session {session.session_id} - proceeding with unknown speaker")
             session.speaker_state = SpeakerStateStatus.UNKNOWN
-            return
+            session.speaker_name = "Guest"  # Fallback name
+            return  # Don't block pipeline, just use unknown speaker
 
         embedding = await self.voice_service.get_embedding(wav_bytes)
         if not embedding:
