@@ -76,12 +76,16 @@ class STTService:
                 # Check for segments and extract transcript
                 if data.get("segments"):
                     segments = data.get("segments")
-                    logger.info(f"STTService found {len(segments)} segments for session {self.session_id}")
+                    
+                    # 🔧 FLOOD FIX: Only log segment count if we should log this data
+                    if should_log:
+                        logger.info(f"STTService found {len(segments)} segments for session {self.session_id}")
                     
                     # Process segments intelligently - don't rely on 'completed' flag
                     await self._process_segments_intelligently(segments)
                 else:
-                    logger.info(f"STTService no segments found in data for session {self.session_id}")
+                    if should_log:
+                        logger.info(f"STTService no segments found in data for session {self.session_id}")
                     
             except websockets.exceptions.ConnectionClosed:
                 logger.info(f"STTService connection closed for session {self.session_id}.")
