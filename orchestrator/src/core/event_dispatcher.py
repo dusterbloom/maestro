@@ -48,7 +48,15 @@ class EventDispatcher:
         if session_id in self.connections:
             websocket = self.connections[session_id]
             try:
+                # Check if WebSocket is still connected before sending
+                if websocket.client_state.name != "CONNECTED":
+                    logger.warning(f"WebSocket for session {session_id} is not connected (state: {websocket.client_state.name}), removing connection")
+                    self.disconnect(session_id)
+                    return
+                
+                logger.info(f"Dispatching event type '{event.type}' to session {session_id}")
                 await websocket.send_json(event.to_dict())
+                logger.info(f"Successfully dispatched event type '{event.type}' to session {session_id}")
             except Exception as e:
                 logger.error(f"Failed to send event to {session_id}: {e}")
                 # Handle connection error, maybe disconnect
