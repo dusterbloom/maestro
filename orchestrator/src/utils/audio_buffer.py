@@ -30,7 +30,7 @@ class AudioBufferManager:
             
         float_array = np.array(list(self.audio_buffer), dtype=np.float32)
         
-        # Simple energy-based VAD
+        # Simple energy-based VAD with debugging
         if apply_vad:
             frame_length = int(self.sample_rate * 0.02)
             hop_length = int(self.sample_rate * 0.01)
@@ -42,9 +42,14 @@ class AudioBufferManager:
             ])
             
             silent_frames = np.where(rms < rms_threshold)[0]
+            silence_ratio = len(silent_frames) / len(rms) if len(rms) > 0 else 1.0
             
-            # A more sophisticated VAD would be better here
-            if len(silent_frames) > len(rms) * 0.8: # If >80% silent, probably not speech
+            logger.info(f"VAD Analysis: {len(rms)} frames, {len(silent_frames)} silent, ratio={silence_ratio:.2f}, max_rms={np.max(rms):.4f}, avg_rms={np.mean(rms):.4f}")
+            
+            # Instead of hard rejection, use a more permissive approach
+            # Allow processing if there's any meaningful audio content
+            if silence_ratio > 0.95 or np.max(rms) < 0.001:  # Only reject if almost completely silent
+                logger.warning(f"Rejecting audio: too silent (silence_ratio={silence_ratio:.2f}, max_rms={np.max(rms):.4f})")
                 return b""
 
         int16_array = np.clip(float_array * 32767, -32767, 32767).astype(np.int16)
