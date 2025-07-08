@@ -27,7 +27,7 @@ class STTService:
                 "task": "transcribe",
                 "model": config.STT_MODEL,
                 "use_vad": True,
-                "no_speech_thresh": 0.3,  # Lower threshold for faster completion
+                "no_speech_thresh": 0.15,  # Ultra-low threshold for immediate completion
                 "send_last_n_segments": 1,  # Send immediately, don't accumulate
             }
             logger.info(f"STTService sending config: {config_msg}")
