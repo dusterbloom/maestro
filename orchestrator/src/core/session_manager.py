@@ -77,6 +77,7 @@ class SessionManager:
             )
         
         elif event_type == "transcript.final":
+            logger.info(f"Received transcript.final event for session {session_id}")
             await self.handle_transcript(session, data.get("transcript", ""))
 
     async def handle_transcript(self, session: Session, transcript: str):
