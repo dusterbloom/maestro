@@ -78,7 +78,7 @@ class SpeakerService(BaseService):
             return
 
         # Query ChromaDB for the closest speaker
-        results = await self.memory_service.collection.query(query_embeddings=[embedding], n_results=1)
+        results = self.memory_service.collection.query(query_embeddings=[embedding], n_results=1)
         
         if results and results["ids"][0]:
             user_id = results["ids"][0][0]
