@@ -12,11 +12,11 @@ class TTSService(BaseService):
     def __init__(self):
         self.tts_url = config.TTS_URL
 
-    async def process(self, text: str, context=None) -> ServiceResult:
-        """Converts text to speech using the TTS service."""
+    async def process(self, text: str, context=None):
+        """Yields audio chunks as soon as they are received from the TTS service."""
         if not text or not text.strip():
             logger.warning("Empty text provided to TTS")
-            return ServiceResult(success=False, error="Empty text provided.")
+            return
 
         try:
             start_time = time.time()
@@ -38,31 +38,24 @@ class TTSService(BaseService):
                 )
                 response.raise_for_status()
                 
-                # Handle streaming response - collect all chunks for now
-                # TODO: Implement real chunk-by-chunk streaming to frontend
-                audio_chunks = []
                 chunk_count = 0
                 async for chunk in response.aiter_bytes():
                     if chunk:
                         chunk_count += 1
-                        audio_chunks.append(chunk)
-                        # Log first chunk arrival for latency tracking
                         if chunk_count == 1:
                             first_chunk_time = time.time() - start_time
                             logger.info(f"🚀 First TTS chunk arrived in {first_chunk_time:.3f}s")
-                
-                audio_bytes = b''.join(audio_chunks)
+                        yield chunk
                 elapsed = time.time() - start_time
-                logger.info(f"✅ TTS completed in {elapsed:.2f}s - {len(audio_bytes)} bytes ({chunk_count} chunks)")
-                return ServiceResult(success=True, data=audio_bytes)
+                logger.info(f"✅ TTS streaming completed in {elapsed:.2f}s ({chunk_count} chunks)")
         except httpx.TimeoutException:
             elapsed = time.time() - start_time
             logger.error(f"❌ TTS timeout after {elapsed:.2f}s")
-            return ServiceResult(success=False, error="TTS service timed out.")
+            return
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(f"❌ TTS synthesis error after {elapsed:.2f}s: {e}")
-            return ServiceResult(success=False, error=f"TTS synthesis failed: {e}")
+            return
 
     async def health_check(self) -> bool:
         # In a real scenario, you'd ping the TTS service's health endpoint

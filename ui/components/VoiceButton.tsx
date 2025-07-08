@@ -72,14 +72,8 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError, ses
               try {
                 const audioBytes = Uint8Array.from(atob(event.data.audio_chunk), c => c.charCodeAt(0));
                 console.log('🔊 Decoded audio chunk:', audioBytes.length, 'bytes');
-                
                 if (playerRef.current) {
-                  console.log('🔊 Playing audio chunk...');
-                  playerRef.current.play(audioBytes.buffer).then(() => {
-                    console.log('🔊 Audio chunk played successfully');
-                  }).catch((playError) => {
-                    console.error('🔊 Audio play promise error:', playError);
-                  });
+                  playerRef.current.enqueueChunk(audioBytes.buffer);
                 } else {
                   console.error('🔊 Audio player not available');
                 }
@@ -87,6 +81,11 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError, ses
                 console.error('🔊 Audio playback error:', audioError);
                 const errorMessage = audioError instanceof Error ? audioError.message : 'Unknown audio error';
                 handleError(`Audio playback failed: ${errorMessage}`);
+              }
+            break;
+            case 'response.audio.end':
+              if (playerRef.current) {
+                playerRef.current.endAudioStream();
               }
               break;
             case 'session.error':

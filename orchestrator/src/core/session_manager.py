@@ -80,12 +80,14 @@ class SessionManager:
             )
         
         elif event_type == "transcript.final":
-            logger.info(f"Received transcript.final event for session {session_id}")
+            logger.info(f"Received transcript.final event for session {session_id} | event_data: {event_data}")
             transcript = data.get("transcript", "")
+            completed = data.get("completed", None)
+            logger.info(f"Transcript content: '{transcript}' | completed: {completed}")
             # Forward transcript to frontend for display
             await self.event_dispatcher.dispatch_event(session_id, Event(
                 type="transcript.final",
-                data={"transcript": transcript}
+                data={"transcript": transcript, "completed": completed}
             ))
             await self.handle_transcript(session, transcript)
 
@@ -100,15 +102,20 @@ class SessionManager:
         # 🔧 CRITICAL FIX: Use RequestDeduplicator to prevent duplicate transcript processing
         # This ensures we only process each unique transcript once, preventing voice floods
         transcript_key = f"{session.session_id}:{transcript.strip()}"
-        
+        logger.info(f"Deduplication key: {transcript_key}")
+
         async def process_transcript():
+            logger.info(f"Launching new pipeline for session {session.session_id} with transcript: '{transcript}'")
             return await self._process_transcript_internal(session, transcript.strip(), start_time)
             
         # Use deduplicator - if same transcript is already processing, join that task instead of creating new one
-        return await self.deduplicator.process_or_join(transcript_key, process_transcript())
+        result = await self.deduplicator.process_or_join(transcript_key, process_transcript())
+        logger.info(f"Transcript processing complete for session {session.session_id} | deduplication key: {transcript_key}")
+        return result
     
     async def _process_transcript_internal(self, session: Session, transcript: str, start_time: float):
 
+        logger.info(f"[Pipeline] START for session {session.session_id} | transcript: '{transcript}' | audio_state: {session.audio_state}")
         session.transition_audio(AudioStateStatus.PROCESSING)
         
         # Start LLM and TTS in parallel for ultra-low latency
@@ -121,7 +128,7 @@ class SessionManager:
             client = ollama.AsyncClient(host=self.conversation_service.ollama_url)
             response = await client.generate(
                 model=config.LLM_MODEL,
-                prompt=self.conversation_service._build_prompt(transcript, session.conversation_history, 
+                prompt=self.conversation_service._build_prompt(transcript, session.conversation_history,
                                                              self.conversation_service._get_agentic_greeting(session)),
                 stream=True,
                 options={
@@ -145,26 +152,30 @@ class SessionManager:
                     if any(ending in token for ending in sentence_endings) and len(sentence_buffer.strip()) > 10:
                         # Send complete sentence to TTS immediately
                         logger.info(f"🚀 Streaming sentence to TTS: '{sentence_buffer.strip()}'")
-                        tts_result = await self.tts_service.process(sentence_buffer.strip())
-                        
-                        if tts_result.success:
-                            # Dispatch audio chunk immediately
+                        async for audio_chunk in self.tts_service.process(sentence_buffer.strip()):
                             await self.event_dispatcher.dispatch_event(session.session_id, Event(
                                 type="response.audio.chunk",
-                                data={"audio_chunk": base64.b64encode(tts_result.data).decode('utf-8')}
+                                data={"audio_chunk": base64.b64encode(audio_chunk).decode('utf-8')}
                             ))
-                        
+                        # Signal end of audio for this sentence
+                        await self.event_dispatcher.dispatch_event(session.session_id, Event(
+                            type="response.audio.end",
+                            data={}
+                        ))
                         sentence_buffer = ""  # Reset for next sentence
             
             # Handle any remaining text
             if sentence_buffer.strip():
                 logger.info(f"🚀 Final sentence to TTS: '{sentence_buffer.strip()}'")
-                tts_result = await self.tts_service.process(sentence_buffer.strip())
-                if tts_result.success:
+                async for audio_chunk in self.tts_service.process(sentence_buffer.strip()):
                     await self.event_dispatcher.dispatch_event(session.session_id, Event(
                         type="response.audio.chunk",
-                        data={"audio_chunk": base64.b64encode(tts_result.data).decode('utf-8')}
+                        data={"audio_chunk": base64.b64encode(audio_chunk).decode('utf-8')}
                     ))
+                await self.event_dispatcher.dispatch_event(session.session_id, Event(
+                    type="response.audio.end",
+                    data={}
+                ))
             
             # Update conversation history
             session.conversation_history.append({"role": "user", "content": transcript})
@@ -173,6 +184,7 @@ class SessionManager:
             return full_response
         
         try:
+            logger.info(f"[Pipeline] Attempting to transition to PLAYING for session {session.session_id} | audio_state: {session.audio_state}")
             session.transition_audio(AudioStateStatus.PLAYING)
             full_response = await stream_llm_to_tts()
             total_duration = time.time() - start_time
@@ -183,4 +195,5 @@ class SessionManager:
             logger.error(f"Streaming pipeline failed for session {session.session_id}: {e}")
             await self.event_dispatcher.dispatch_event(session.session_id, Event(type="session.error", data={"message": str(e)}))
         
+        logger.info(f"[Pipeline] END for session {session.session_id} | audio_state: {session.audio_state}")
         session.transition_audio(AudioStateStatus.IDLE)

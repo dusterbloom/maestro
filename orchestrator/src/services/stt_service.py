@@ -18,7 +18,7 @@ class STTService:
         # Smart segment completion tracking
         self.last_segment_text = ""
         self.last_segment_time = 0
-        self.segment_stability_duration = 0.5  # seconds to wait for segment stability
+        self.segment_stability_duration = 1.5  # seconds to wait for segment stability - matches expectations
         self.pending_segment_timer = None
         
         # Prevent duplicate transcript processing
@@ -28,6 +28,10 @@ class STTService:
         # Prevent completed segment flood logging
         self.last_logged_completed_segment = ""
         self.completed_segment_log_count = 0
+        
+        # Prevent incomplete segment flood logging
+        self.last_logged_incomplete_segment = ""
+        self.incomplete_segment_log_count = 0
 
     async def connect(self):
         try:
@@ -109,9 +113,33 @@ class STTService:
         segment_text = latest_segment.get('text', '').strip()
         is_completed = latest_segment.get('completed', False)
         
-        # If it's not a completed segment, always log
-        if not is_completed:
-            return True
+        # Handle both completed and incomplete segment flooding
+        if is_completed:
+            # For completed segments, check if we've already logged this exact text
+            if segment_text == self.last_logged_completed_segment:
+                # Only log every 50th duplicate to show it's still happening without flooding
+                self.completed_segment_log_count += 1
+                if self.completed_segment_log_count % 50 == 0:
+                    logger.warning(f"STTService: WhisperLive sent the same completed segment {self.completed_segment_log_count} times: '{segment_text}'")
+                return False  # Don't log the duplicate
+            else:
+                # New completed segment - reset counter and log it
+                self.last_logged_completed_segment = segment_text
+                self.completed_segment_log_count = 1
+                return True
+        else:
+            # For incomplete segments, also prevent flooding
+            if segment_text == self.last_logged_incomplete_segment:
+                # Only log every 10th duplicate for incomplete segments (more frequent than completed)
+                self.incomplete_segment_log_count += 1
+                if self.incomplete_segment_log_count % 10 == 0:
+                    logger.debug(f"STTService: Processing incomplete segment (#{self.incomplete_segment_log_count}): '{segment_text[:50]}...'")
+                return False  # Don't log the duplicate
+            else:
+                # New incomplete segment - reset counter and log it
+                self.last_logged_incomplete_segment = segment_text
+                self.incomplete_segment_log_count = 1
+                return True
             
         # For completed segments, check if we've already logged this exact text
         if segment_text == self.last_logged_completed_segment:

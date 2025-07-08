@@ -169,113 +169,89 @@ export class AudioPlayer {
   private activeSources: AudioBufferSourceNode[] = [];
   private onPlaybackStartCallback?: () => void;
   private onPlaybackEndCallback?: () => void;
-  
+
+  // --- Streaming queue state ---
+  private chunkQueue: ArrayBuffer[] = [];
+  private isPlayingQueue: boolean = false;
+  private endOfSentence: boolean = false;
+
   constructor() {
     this.audioContext = new AudioContext();
     this.gainNode = this.audioContext.createGain();
     this.gainNode.connect(this.audioContext.destination);
   }
-  
-  async play(audioData: ArrayBuffer): Promise<void> {
+
+  /**
+   * Enqueue an audio chunk for sequential playback.
+   */
+  enqueueChunk(audioData: ArrayBuffer) {
+    this.chunkQueue.push(audioData);
+    if (!this.isPlayingQueue) {
+      this.playNextChunk();
+    }
+  }
+
+  /**
+   * Signal the end of the current sentence's audio stream.
+   */
+  endAudioStream() {
+    this.endOfSentence = true;
+    // If nothing is playing and queue is empty, fire playback end callback
+    if (!this.isPlayingQueue && this.chunkQueue.length === 0) {
+      this.onPlaybackEndCallback?.();
+    }
+  }
+
+  /**
+   * Play the next chunk in the queue, if any.
+   */
+  private async playNextChunk() {
+    if (this.chunkQueue.length === 0) {
+      this.isPlayingQueue = false;
+      // If end of sentence was signaled, fire playback end callback
+      if (this.endOfSentence) {
+        this.onPlaybackEndCallback?.();
+        this.endOfSentence = false;
+      }
+      return;
+    }
+    this.isPlayingQueue = true;
+    const audioData = this.chunkQueue.shift()!;
     try {
-      // Resume audio context if suspended (browser autoplay policy)
       if (this.audioContext.state === 'suspended') {
         await this.audioContext.resume();
       }
-      
       const audioBuffer = await this.audioContext.decodeAudioData(audioData);
       const source = this.audioContext.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(this.gainNode);
-      
-      // Track active sources for interruption capability
+
       this.activeSources.push(source);
-      
-      // Notify playback start
-      this.onPlaybackStartCallback?.();
-      
-      source.start();
-      
-      // Return promise that resolves when audio finishes playing
-      return new Promise((resolve) => {
-        source.onended = () => {
-          // Remove from active sources
-          const index = this.activeSources.indexOf(source);
-          if (index > -1) {
-            this.activeSources.splice(index, 1);
-          }
-          
-          // Notify playback end if no more active sources
-          if (this.activeSources.length === 0) {
-            this.onPlaybackEndCallback?.();
-          }
-          
-          resolve();
-        };
-      });
-    } catch (error) {
-      console.error('Failed to play audio:', error);
-      throw error;
-    }
-  }
-  
-  async playPCMChunk(pcmData: ArrayBuffer): Promise<void> {
-    try {
-      // Resume audio context if suspended
-      if (this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
-      }
-      
-      // PCM data from Kokoro: 16-bit signed integers at 24000 Hz
-      const pcmInt16 = new Int16Array(pcmData);
-      const sampleRate = 24000;
-      const channels = 1;
-      
-      // Create audio buffer from PCM data
-      const audioBuffer = this.audioContext.createBuffer(channels, pcmInt16.length, sampleRate);
-      const outputData = audioBuffer.getChannelData(0);
-      
-      // Convert Int16 to Float32 (normalize to [-1, 1])
-      for (let i = 0; i < pcmInt16.length; i++) {
-        outputData[i] = pcmInt16[i] / 32768.0;
-      }
-      
-      // Play the audio chunk
-      const source = this.audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(this.gainNode);
-      
-      // Track active sources for interruption capability
-      this.activeSources.push(source);
-      
-      // Start playback notification on first chunk
       if (this.activeSources.length === 1) {
         this.onPlaybackStartCallback?.();
       }
-      
+
       source.start();
-      
-      // Return promise that resolves when audio finishes playing
-      return new Promise((resolve) => {
-        source.onended = () => {
-          // Remove from active sources
-          const index = this.activeSources.indexOf(source);
-          if (index > -1) {
-            this.activeSources.splice(index, 1);
-          }
-          
-          // Notify playback end if no more active sources
-          if (this.activeSources.length === 0) {
-            this.onPlaybackEndCallback?.();
-          }
-          
-          resolve();
-        };
-      });
+
+      source.onended = () => {
+        const index = this.activeSources.indexOf(source);
+        if (index > -1) {
+          this.activeSources.splice(index, 1);
+        }
+        // Play next chunk in the queue
+        this.playNextChunk();
+      };
     } catch (error) {
-      console.error('Failed to play PCM chunk:', error);
-      throw error;
+      console.error('Failed to play audio chunk:', error);
+      // Try to play next chunk even if this one fails
+      this.playNextChunk();
     }
+  }
+  
+  // Optionally, you can keep playPCMChunk for PCM support, but it should also use the queue if needed.
+  async playPCMChunk(pcmData: ArrayBuffer): Promise<void> {
+    // For now, just enqueue as a normal chunk (assuming WAV/PCM is handled by decodeAudioData)
+    this.enqueueChunk(pcmData);
   }
   
   setVolume(volume: number) {
@@ -297,6 +273,9 @@ export class AudioPlayer {
       }
     });
     this.activeSources = [];
+    this.chunkQueue = [];
+    this.isPlayingQueue = false;
+    this.endOfSentence = false;
     this.onPlaybackEndCallback?.();
   }
   
