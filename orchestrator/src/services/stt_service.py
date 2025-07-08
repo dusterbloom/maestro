@@ -49,15 +49,27 @@ class STTService:
             try:
                 message = await self.websocket.recv()
                 data = json.loads(message)
-                # This is a simplified handler. A real one would be more robust.
+                logger.info(f"STTService received raw data for session {self.session_id}: {data}")
+                
+                # Check for segments and extract transcript
                 if data.get("segments"):
-                    transcript = " ".join([s['text'] for s in data['segments']]).strip()
+                    segments = data.get("segments")
+                    logger.info(f"STTService found {len(segments)} segments for session {self.session_id}")
+                    transcript = " ".join([s['text'] for s in segments]).strip()
+                    logger.info(f"STTService extracted transcript for session {self.session_id}: '{transcript}'")
+                    
                     if transcript:
+                        logger.info(f"STTService sending transcript.final event for session {self.session_id}")
                         # Fire an event back to the SessionManager
                         await self.event_callback({
                             "type": "transcript.final",
                             "data": {"transcript": transcript}
                         })
+                    else:
+                        logger.warning(f"STTService empty transcript after joining segments for session {self.session_id}")
+                else:
+                    logger.info(f"STTService no segments found in data for session {self.session_id}")
+                    
             except websockets.exceptions.ConnectionClosed:
                 logger.info(f"STTService connection closed for session {self.session_id}.")
                 self.is_connected = False
