@@ -99,7 +99,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError, ses
       recorderRef.current?.cleanup();
       playerRef.current?.cleanup();
     };
-  }, [handleError, onTranscript, updateStatus]);
+  }, []); // Remove dependencies to prevent reconnection loops
 
   const startRecording = useCallback(() => {
     if (status !== 'connected' || !recorderRef.current) return;
