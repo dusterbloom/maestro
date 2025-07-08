@@ -31,13 +31,20 @@ class ConversationService(BaseService):
             response = await client.generate(
                 model=config.LLM_MODEL,
                 prompt=prompt,
-                stream=False, # For simplicity in this refactoring phase
+                stream=True,  # Enable streaming for ultra-low latency
                 options={
                     "num_predict": config.LLM_MAX_TOKENS,
                     "temperature": config.LLM_TEMPERATURE,
                 }
             )
-            full_response = response.get('response', '').strip()
+            
+            # Collect streaming response
+            full_response = ""
+            async for chunk in response:
+                if 'response' in chunk:
+                    full_response += chunk['response']
+            
+            full_response = full_response.strip()
             if not full_response:
                 return ServiceResult(success=False, error="LLM generated an empty response.")
             
