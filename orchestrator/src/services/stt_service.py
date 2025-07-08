@@ -87,5 +87,3 @@ class STTService:
             self.is_connected = False
             await self.websocket.close()
             logger.info(f"STTService connection for session {self.session_id} closed.")
-
-import json
