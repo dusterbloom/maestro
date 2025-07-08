@@ -129,14 +129,19 @@ class SessionManager:
         session.transition_audio(AudioStateStatus.PLAYING)
         audio_chunk_size = len(tts_result.data)
         
-        # Audio Dispatch
+        # Audio Dispatch with connection validation
         dispatch_start = time.time()
         logger.info(f"Dispatching audio chunk of {audio_chunk_size} bytes to session {session.session_id}")
-        await self.event_dispatcher.dispatch_event(session.session_id, Event(
+        dispatch_success = await self.event_dispatcher.dispatch_event(session.session_id, Event(
             type="response.audio.chunk",
             data={"audio_chunk": base64.b64encode(tts_result.data).decode('utf-8')}
         ))
         dispatch_duration = time.time() - dispatch_start
+        
+        if not dispatch_success:
+            logger.error(f"Failed to dispatch audio to session {session.session_id} - connection lost during processing")
+        else:
+            logger.info(f"Audio successfully dispatched to session {session.session_id}")
         
         total_duration = time.time() - start_time
         logger.info(f"Complete pipeline for session {session.session_id}: Total={total_duration:.3f}s (LLM={llm_duration:.3f}s, TTS={tts_duration:.3f}s, Dispatch={dispatch_duration:.3f}s)")
