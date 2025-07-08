@@ -159,6 +159,9 @@ class STTService:
     async def _send_completed_transcript(self, transcript: str):
         """Send a completed transcript to the session manager"""
         if transcript and transcript.strip():
+            # Record that we sent this transcript
+            self.last_sent_transcript = transcript.strip()
+            
             logger.info(f"STTService sending transcript.final event for session {self.session_id}: '{transcript}'")
             # Fire an event back to the SessionManager
             await self.event_callback({
