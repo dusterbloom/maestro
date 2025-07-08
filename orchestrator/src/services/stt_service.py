@@ -14,6 +14,12 @@ class STTService:
         self.event_callback = event_callback
         self.websocket: websockets.WebSocketClientProtocol = None
         self.is_connected = False
+        
+        # Smart segment completion tracking
+        self.last_segment_text = ""
+        self.last_segment_time = 0
+        self.segment_stability_duration = 1.5  # seconds to wait for segment stability
+        self.pending_segment_timer = None
 
     async def connect(self):
         try:
