@@ -101,8 +101,11 @@ class SessionManager:
             return
 
         session.transition_audio(AudioStateStatus.PLAYING)
+        audio_chunk_size = len(tts_result.data)
+        logger.info(f"Dispatching audio chunk of {audio_chunk_size} bytes to session {session.session_id}")
         await self.event_dispatcher.dispatch_event(session.session_id, Event(
             type="response.audio.chunk",
             data={"audio_chunk": base64.b64encode(tts_result.data).decode('utf-8')}
         ))
+        logger.info(f"Audio chunk dispatched to session {session.session_id}")
         session.transition_audio(AudioStateStatus.IDLE)
