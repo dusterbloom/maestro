@@ -12,25 +12,44 @@ class MemoryService:
         self.collection = None
 
     async def initialize_chroma_client(self):
-        max_retries = 30  # Increased retries
+        max_retries = 30
         retry_delay = 2  # seconds
 
         for i in range(max_retries):
             try:
+                print(f"🗄️ Attempting to connect to ChromaDB (attempt {i+1}/{max_retries})...")
+                
                 # Use official ChromaDB client syntax per docs
                 self.chroma_client = chromadb.HttpClient(host="chromadb", port=8000)
+                
                 # Test connection with heartbeat
-                self.chroma_client.heartbeat()
+                heartbeat_result = self.chroma_client.heartbeat()
+                print(f"🗄️ ChromaDB heartbeat successful: {heartbeat_result}")
+                
                 # Create collection for speaker embeddings
                 self.collection = self.chroma_client.get_or_create_collection("speaker_embeddings")
-                print(f"Successfully connected to ChromaDB after {i+1} attempts.")
+                print(f"🗄️ Successfully connected to ChromaDB collection after {i+1} attempts.")
+                
+                # Test Redis connection
+                await self._test_redis_connection()
+                
                 return
             except Exception as e:
-                print(f"Attempt {i+1}/{max_retries} to connect to ChromaDB failed: {e}")
+                print(f"🗄️ Attempt {i+1}/{max_retries} to connect to ChromaDB failed: {e}")
                 if i < max_retries - 1:
                     await asyncio.sleep(retry_delay)
                 else:
+                    print(f"🗄️ CRITICAL: Failed to connect to ChromaDB after {max_retries} attempts!")
                     raise # Re-raise the last exception if all retries fail
+
+    async def _test_redis_connection(self):
+        """Test Redis connection and log result"""
+        try:
+            await self.redis_client.ping()
+            print("🗄️ Redis connection test successful")
+        except Exception as redis_error:
+            print(f"🗄️ Redis connection test failed: {redis_error}")
+            raise
 
     async def find_speaker_by_embedding(self, embedding: list[float]) -> dict | None:
         results = self.collection.query(query_embeddings=[embedding], n_results=1)
