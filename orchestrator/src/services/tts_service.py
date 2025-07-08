@@ -38,15 +38,22 @@ class TTSService(BaseService):
                 )
                 response.raise_for_status()
                 
-                # Handle streaming response
+                # Handle streaming response - collect all chunks for now
+                # TODO: Implement real chunk-by-chunk streaming to frontend
                 audio_chunks = []
+                chunk_count = 0
                 async for chunk in response.aiter_bytes():
                     if chunk:
+                        chunk_count += 1
                         audio_chunks.append(chunk)
+                        # Log first chunk arrival for latency tracking
+                        if chunk_count == 1:
+                            first_chunk_time = time.time() - start_time
+                            logger.info(f"🚀 First TTS chunk arrived in {first_chunk_time:.3f}s")
                 
                 audio_bytes = b''.join(audio_chunks)
                 elapsed = time.time() - start_time
-                logger.info(f"✅ TTS completed in {elapsed:.2f}s - {len(audio_bytes)} bytes")
+                logger.info(f"✅ TTS completed in {elapsed:.2f}s - {len(audio_bytes)} bytes ({chunk_count} chunks)")
                 return ServiceResult(success=True, data=audio_bytes)
         except httpx.TimeoutException:
             elapsed = time.time() - start_time
