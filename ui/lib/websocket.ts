@@ -13,7 +13,7 @@ export class MaestroWebSocket {
     }
 
     public connect() {
-        const wsUrl = `${process.env.NEXT_PUBLIC_ORCHESTRATOR_WS_URL}/ws/${this.sessionId}`;
+        const wsUrl = `${process.env.NEXT_PUBLIC_ORCHESTRATOR_WS_URL}/${this.sessionId}`;
         this.ws = new WebSocket(wsUrl);
 
         this.ws.onopen = () => {
