@@ -66,6 +66,10 @@ class SpeakerService(BaseService):
             logger.warning(f"VAD rejected audio for session {session.session_id} - proceeding with unknown speaker")
             session.speaker_state = SpeakerStateStatus.UNKNOWN
             session.speaker_name = "Guest"  # Fallback name
+            # Clean up buffer to prevent endless retrigger
+            if session.session_id in self.session_audio_buffers:
+                del self.session_audio_buffers[session.session_id]
+                logger.info(f"Cleaned up audio buffer for session {session.session_id}")
             return  # Don't block pipeline, just use unknown speaker
 
         embedding = await self.voice_service.get_embedding(wav_bytes)
