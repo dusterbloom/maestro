@@ -31,7 +31,7 @@ class TTSService(BaseService):
                         "input": text[:500],
                         "voice": config.TTS_VOICE,
                         "response_format": "wav",
-                        "stream": False,
+                        "stream": True,
                         "speed": config.TTS_SPEED,
                         "volume_multiplier": config.TTS_VOLUME
                     }
