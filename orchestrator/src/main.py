@@ -25,8 +25,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await session_manager.handle_connect(session_id, websocket)
     try:
         while websocket.client_state == WebSocketState.CONNECTED:
-            data = await websocket.receive_json()
-            await session_manager.handle_event(session_id, data)
+            try:
+                # Increase timeout to handle long processing times (TTS generation can take 2-3s)
+                data = await asyncio.wait_for(websocket.receive_json(), timeout=30.0)
+                await session_manager.handle_event(session_id, data)
+            except asyncio.TimeoutError:
+                # Send keepalive ping to prevent connection timeout
+                logger.debug(f"Sending keepalive ping to session {session_id}")
+                await websocket.ping()
     except WebSocketDisconnect:
         logger.info(f"Client for session {session_id} disconnected.")
     except Exception as e:
