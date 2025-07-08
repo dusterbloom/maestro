@@ -80,7 +80,9 @@ class SessionManager:
             await self.handle_transcript(session, data.get("transcript", ""))
 
     async def handle_transcript(self, session: Session, transcript: str):
+        logger.info(f"Received transcript for session {session.session_id}: '{transcript}'")
         if not transcript.strip():
+            logger.warning(f"Empty transcript received for session {session.session_id}")
             return
 
         session.transition_audio(AudioStateStatus.PROCESSING)
