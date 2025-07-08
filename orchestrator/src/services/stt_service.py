@@ -24,6 +24,10 @@ class STTService:
         # Prevent duplicate transcript processing
         self.last_sent_transcript = ""
         self.transcript_cooldown = 3.0  # seconds before allowing same transcript again
+        
+        # Prevent completed segment flood logging
+        self.last_logged_completed_segment = ""
+        self.completed_segment_log_count = 0
 
     async def connect(self):
         try:
