@@ -47,12 +47,12 @@ class SpeakerService(BaseService):
             request_id = f"speaker_id_{session.session_id}"
             
             # This task will only be executed if another one with the same ID isn't already running.
-            asyncio.create_task(
-                self.deduplicator.process_or_join(
+            async def dedup_task():
+                return await self.deduplicator.process_or_join(
                     request_id,
                     self._identify_speaker(session, buffer_manager)
                 )
-            )
+            asyncio.create_task(dedup_task())
             return ServiceResult(success=True, data={"status": "identification_triggered"})
         
         return ServiceResult(success=True, data={"status": "accumulating"})
