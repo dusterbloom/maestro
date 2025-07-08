@@ -60,7 +60,7 @@ services:
       context: ./ui
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_ORCHESTRATOR_WS_URL: ${ORCHESTRATOR_WS_URL:-ws://localhost:8000}
+        NEXT_PUBLIC_ORCHESTRATOR_WS_URL: ${NEXT_PUBLIC_ORCHESTRATOR_WS_URL:-ws://localhost:8000/ws}
     ports:
       - "3001:3001"
     environment:
