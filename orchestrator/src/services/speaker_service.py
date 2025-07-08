@@ -72,35 +72,38 @@ class SpeakerService(BaseService):
                 logger.info(f"Cleaned up audio buffer for session {session.session_id}")
             return  # Don't block pipeline, just use unknown speaker
 
-        embedding = await self.voice_service.get_embedding(wav_bytes)
-        if not embedding:
-            session.speaker_state = SpeakerStateStatus.UNKNOWN
-            return
+        try:
+            embedding = await self.voice_service.get_embedding(wav_bytes)
+            if not embedding:
+                session.speaker_state = SpeakerStateStatus.UNKNOWN
+                session.speaker_name = "Guest"
+                return
 
-        # Query ChromaDB for the closest speaker
-        results = self.memory_service.collection.query(query_embeddings=[embedding], n_results=1)
-        
-        if results and results["ids"][0]:
-            user_id = results["ids"][0][0]
-            distance = results["distances"][0][0]
+            # Query ChromaDB for the closest speaker
+            results = self.memory_service.collection.query(query_embeddings=[embedding], n_results=1)
             
-            if distance < config.SPEAKER_SIMILARITY_THRESHOLD:
-                profile = await self.memory_service.get_speaker_profile(user_id)
-                session.speaker_state = SpeakerStateStatus.RECOGNIZED
-                session.speaker_id = user_id
-                session.speaker_name = profile.get("name", "Friend")
-                session.is_new_speaker = False
-                logger.info(f"Speaker for session {session.session_id} identified as {session.speaker_name} (ID: {user_id})")
+            if results and results["ids"][0]:
+                user_id = results["ids"][0][0]
+                distance = results["distances"][0][0]
+                
+                if distance < config.SPEAKER_SIMILARITY_THRESHOLD:
+                    profile = await self.memory_service.get_speaker_profile(user_id)
+                    session.speaker_state = SpeakerStateStatus.RECOGNIZED
+                    session.speaker_id = user_id
+                    session.speaker_name = profile.get("name", "Friend")
+                    session.is_new_speaker = False
+                    logger.info(f"Speaker for session {session.session_id} identified as {session.speaker_name} (ID: {user_id})")
+                else:
+                    # No close match found, register as a new speaker
+                    await self._register_new_speaker(session, embedding)
             else:
-                # No close match found, register as a new speaker
+                # No speakers in DB, register this one
                 await self._register_new_speaker(session, embedding)
-        else:
-            # No speakers in DB, register this one
-            await self._register_new_speaker(session, embedding)
-
-        # Clean up the buffer for this session
-        if session.session_id in self.session_audio_buffers:
-            del self.session_audio_buffers[session.session_id]
+        finally:
+            # Always clean up the buffer for this session to prevent infinite loops
+            if session.session_id in self.session_audio_buffers:
+                del self.session_audio_buffers[session.session_id]
+                logger.info(f"Cleaned up audio buffer for session {session.session_id}")
 
     async def _register_new_speaker(self, session: Session, embedding: list[float]):
         user_id = await self.memory_service.create_speaker_profile(embedding)
