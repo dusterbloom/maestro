@@ -20,13 +20,18 @@ class STTService:
             self.websocket = await asyncio.wait_for(websockets.connect(config.WHISPER_URL), timeout=10)
             logger.info(f"STTService WebSocket connected for session {self.session_id}")
             
-            # WhisperLive specific configuration
+            # WhisperLive specific configuration with optimized VAD
             config_msg = {
                 "uid": self.session_id,
                 "language": "en",
                 "task": "transcribe",
                 "model": config.STT_MODEL,
                 "use_vad": True,
+                "vad_parameters": {
+                    "threshold": 0.3,  # Lower threshold for faster detection
+                },
+                "no_speech_thresh": 0.3,  # Lower threshold for faster completion
+                "send_last_n_segments": 1,  # Send immediately, don't accumulate
             }
             logger.info(f"STTService sending config: {config_msg}")
             await self.websocket.send(json.dumps(config_msg))
