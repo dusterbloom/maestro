@@ -52,22 +52,29 @@ class STTService:
                 data = json.loads(message)
                 logger.info(f"STTService received raw data for session {self.session_id}: {data}")
                 
-                # Check for segments and extract transcript
+                # Check for segments and extract transcript - only process completed segments
                 if data.get("segments"):
                     segments = data.get("segments")
                     logger.info(f"STTService found {len(segments)} segments for session {self.session_id}")
-                    transcript = " ".join([s['text'] for s in segments]).strip()
-                    logger.info(f"STTService extracted transcript for session {self.session_id}: '{transcript}'")
                     
-                    if transcript:
-                        logger.info(f"STTService sending transcript.final event for session {self.session_id}")
-                        # Fire an event back to the SessionManager
-                        await self.event_callback({
-                            "type": "transcript.final",
-                            "data": {"transcript": transcript}
-                        })
+                    # Only process completed segments to avoid endless loops
+                    completed_segments = [s for s in segments if s.get('completed', False)]
+                    
+                    if completed_segments:
+                        transcript = " ".join([s['text'] for s in completed_segments]).strip()
+                        logger.info(f"STTService extracted transcript from {len(completed_segments)} completed segments for session {self.session_id}: '{transcript}'")
+                        
+                        if transcript:
+                            logger.info(f"STTService sending transcript.final event for session {self.session_id}")
+                            # Fire an event back to the SessionManager
+                            await self.event_callback({
+                                "type": "transcript.final",
+                                "data": {"transcript": transcript}
+                            })
+                        else:
+                            logger.warning(f"STTService empty transcript after joining completed segments for session {self.session_id}")
                     else:
-                        logger.warning(f"STTService empty transcript after joining segments for session {self.session_id}")
+                        logger.info(f"STTService no completed segments yet for session {self.session_id} - waiting for speech completion")
                 else:
                     logger.info(f"STTService no segments found in data for session {self.session_id}")
                     
