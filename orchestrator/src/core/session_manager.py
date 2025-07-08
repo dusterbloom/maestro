@@ -97,6 +97,18 @@ class SessionManager:
             logger.warning(f"Empty transcript received for session {session.session_id}")
             return
 
+        # 🔧 CRITICAL FIX: Use RequestDeduplicator to prevent duplicate transcript processing
+        # This ensures we only process each unique transcript once, preventing voice floods
+        transcript_key = f"{session.session_id}:{transcript.strip()}"
+        
+        async def process_transcript():
+            return await self._process_transcript_internal(session, transcript.strip(), start_time)
+            
+        # Use deduplicator - if same transcript is already processing, join that task instead of creating new one
+        return await self.deduplicator.process_or_join(transcript_key, process_transcript())
+    
+    async def _process_transcript_internal(self, session: Session, transcript: str, start_time: float):
+
         session.transition_audio(AudioStateStatus.PROCESSING)
         
         # Start LLM and TTS in parallel for ultra-low latency
