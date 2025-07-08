@@ -45,22 +45,38 @@ class EventDispatcher:
             logger.info(f"WebSocket disconnected for session: {session_id}")
 
     async def dispatch_event(self, session_id: str, event: Event):
-        if session_id in self.connections:
-            websocket = self.connections[session_id]
-            try:
-                # Check if WebSocket is still connected before sending
-                if websocket.client_state.name != "CONNECTED":
-                    logger.warning(f"WebSocket for session {session_id} is not connected (state: {websocket.client_state.name}), removing connection")
-                    self.disconnect(session_id)
-                    return
-                
-                logger.info(f"Dispatching event type '{event.type}' to session {session_id}")
-                await websocket.send_json(event.to_dict())
-                logger.info(f"Successfully dispatched event type '{event.type}' to session {session_id}")
-            except Exception as e:
-                logger.error(f"Failed to send event to {session_id}: {e}")
-                # Handle connection error, maybe disconnect
+        if session_id not in self.connections:
+            logger.warning(f"Cannot dispatch {event.type} - session {session_id} not in connections")
+            return False
+            
+        websocket = self.connections[session_id]
+        try:
+            # Enhanced connection validation
+            if websocket.client_state.name != "CONNECTED":
+                logger.warning(f"WebSocket for session {session_id} is not connected (state: {websocket.client_state.name}), removing connection")
                 self.disconnect(session_id)
+                return False
+            
+            # Check for closed or closing states
+            if hasattr(websocket, 'close_code') and websocket.close_code is not None:
+                logger.warning(f"WebSocket for session {session_id} is closed (code: {websocket.close_code}), removing connection")
+                self.disconnect(session_id)
+                return False
+                
+            logger.info(f"Dispatching event type '{event.type}' to session {session_id}")
+            await websocket.send_json(event.to_dict())
+            logger.info(f"Successfully dispatched event type '{event.type}' to session {session_id}")
+            return True
+            
+        except ConnectionResetError as e:
+            logger.warning(f"Connection reset for session {session_id}: {e}")
+            self.disconnect(session_id)
+            return False
+        except Exception as e:
+            logger.error(f"Failed to send event to {session_id}: {e}")
+            # Handle connection error, maybe disconnect
+            self.disconnect(session_id)
+            return False
 
     async def broadcast_event(self, event: Event):
         for session_id in list(self.connections.keys()):
