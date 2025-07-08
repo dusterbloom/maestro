@@ -199,14 +199,21 @@ class STTService:
     async def _send_completed_transcript(self, transcript: str):
         """Send a completed transcript to the session manager"""
         if transcript and transcript.strip():
-            # Record that we sent this transcript
-            self.last_sent_transcript = transcript.strip()
+            transcript_clean = transcript.strip()
             
-            logger.info(f"STTService sending transcript.final event for session {self.session_id}: '{transcript}'")
+            # 🔧 CRITICAL FIX: Bulletproof duplicate prevention for transcript.final events
+            if hasattr(self, 'last_sent_transcript') and transcript_clean == self.last_sent_transcript:
+                logger.debug(f"STTService preventing duplicate transcript.final event: '{transcript_clean}'")
+                return  # Don't send duplicate transcript.final events
+            
+            # Record that we sent this transcript
+            self.last_sent_transcript = transcript_clean
+            
+            logger.info(f"STTService sending transcript.final event for session {self.session_id}: '{transcript_clean}'")
             # Fire an event back to the SessionManager
             await self.event_callback({
                 "type": "transcript.final",
-                "data": {"transcript": transcript.strip()}
+                "data": {"transcript": transcript_clean}
             })
         else:
             logger.warning(f"STTService attempted to send empty transcript for session {self.session_id}")
