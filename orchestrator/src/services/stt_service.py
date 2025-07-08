@@ -15,21 +15,33 @@ class STTService:
 
     async def connect(self):
         try:
-            self.websocket = await websockets.connect(config.WHISPER_URL)
+            logger.info(f"STTService attempting to connect to {config.WHISPER_URL}")
+            self.websocket = await asyncio.wait_for(websockets.connect(config.WHISPER_URL), timeout=10)
+            logger.info(f"STTService WebSocket connected for session {self.session_id}")
+            
             # WhisperLive specific configuration
-            await self.websocket.send(json.dumps({
+            config_msg = {
                 "uid": self.session_id,
                 "language": "en",
                 "task": "transcribe",
                 "model": config.STT_MODEL,
                 "use_vad": True,
-            }))
+            }
+            logger.info(f"STTService sending config: {config_msg}")
+            await self.websocket.send(json.dumps(config_msg))
+            logger.info(f"STTService config sent for session {self.session_id}")
+            
             self.is_connected = True
             asyncio.create_task(self._listen())
             logger.info(f"STTService for session {self.session_id} connected to WhisperLive.")
+        except asyncio.TimeoutError:
+            logger.error(f"STTService connection timeout for session {self.session_id} to {config.WHISPER_URL}")
+            self.is_connected = False
         except Exception as e:
             logger.error(f"STTService for session {self.session_id} failed to connect: {e}")
             logger.error(f"STTService connection details - URL: {config.WHISPER_URL}, Session: {self.session_id}")
+            import traceback
+            logger.error(f"STTService traceback: {traceback.format_exc()}")
             self.is_connected = False
 
     async def _listen(self):
