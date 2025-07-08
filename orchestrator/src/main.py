@@ -33,7 +33,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             except asyncio.TimeoutError:
                 # Send keepalive ping to prevent connection timeout
                 logger.debug(f"Sending keepalive ping to session {session_id}")
-                await websocket.ping()
+                await websocket.send_json({"type": "ping"})
     except WebSocketDisconnect:
         logger.info(f"Client for session {session_id} disconnected.")
     except Exception as e:
