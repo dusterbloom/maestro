@@ -37,8 +37,15 @@ class TTSService(BaseService):
                     }
                 )
                 response.raise_for_status()
+                
+                # Handle streaming response
+                audio_chunks = []
+                async for chunk in response.aiter_bytes():
+                    if chunk:
+                        audio_chunks.append(chunk)
+                
+                audio_bytes = b''.join(audio_chunks)
                 elapsed = time.time() - start_time
-                audio_bytes = response.content
                 logger.info(f"✅ TTS completed in {elapsed:.2f}s - {len(audio_bytes)} bytes")
                 return ServiceResult(success=True, data=audio_bytes)
         except httpx.TimeoutException:
