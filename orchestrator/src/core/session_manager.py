@@ -2,7 +2,9 @@ import asyncio
 import logging
 import base64
 import time
+import ollama
 from fastapi import WebSocket
+from config import config
 from core.state_machine import StateMachine, ConnectionState, AudioStateStatus, Session
 from core.event_dispatcher import EventDispatcher, Event
 from services.stt_service import STTService
