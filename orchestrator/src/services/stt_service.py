@@ -21,7 +21,7 @@ class STTService:
                 "uid": self.session_id,
                 "language": "en",
                 "task": "transcribe",
-                "model": "tiny.en",
+                "model": config.STT_MODEL,
                 "use_vad": True,
             }))
             self.is_connected = True
