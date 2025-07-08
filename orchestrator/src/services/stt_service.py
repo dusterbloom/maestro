@@ -67,7 +67,11 @@ class STTService:
             try:
                 message = await self.websocket.recv()
                 data = json.loads(message)
-                logger.info(f"STTService received raw data for session {self.session_id}: {data}")
+                
+                # 🔧 CRITICAL FIX: Intelligent logging to prevent completed segment flood
+                should_log = self._should_log_segment_data(data)
+                if should_log:
+                    logger.info(f"STTService received raw data for session {self.session_id}: {data}")
                 
                 # Check for segments and extract transcript
                 if data.get("segments"):
