@@ -38,11 +38,23 @@ class ConversationService(BaseService):
                 }
             )
             
-            # Collect streaming response
+            # Collect streaming response with early token logging
             full_response = ""
+            token_count = 0
+            start_time = time.time()
+            
             async for chunk in response:
                 if 'response' in chunk:
+                    token_count += 1
                     full_response += chunk['response']
+                    
+                    # Log first token arrival for ultra-low latency tracking
+                    if token_count == 1:
+                        first_token_time = time.time() - start_time
+                        logger.info(f"🚀 First LLM token arrived in {first_token_time:.3f}s")
+                    
+                    # TODO: Start TTS processing on first sentence boundary
+                    # This would achieve true streaming pipeline
             
             full_response = full_response.strip()
             if not full_response:
