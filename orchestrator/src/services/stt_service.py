@@ -90,6 +90,38 @@ class STTService:
             except Exception as e:
                 logger.error(f"Error in STTService listener for session {self.session_id}: {e}")
 
+    def _should_log_segment_data(self, data):
+        """
+        🔧 CRITICAL FIX: Prevent completed segment flood logging
+        Only log segment data if it's new or meaningful to avoid hundreds of duplicate logs
+        """
+        # Check if this data contains completed segments
+        segments = data.get("segments", [])
+        if not segments:
+            return True  # Always log non-segment data
+            
+        # Get the latest segment text and completion status
+        latest_segment = segments[-1]
+        segment_text = latest_segment.get('text', '').strip()
+        is_completed = latest_segment.get('completed', False)
+        
+        # If it's not a completed segment, always log
+        if not is_completed:
+            return True
+            
+        # For completed segments, check if we've already logged this exact text
+        if segment_text == self.last_logged_completed_segment:
+            # Only log every 50th duplicate to show it's still happening without flooding
+            self.completed_segment_log_count += 1
+            if self.completed_segment_log_count % 50 == 0:
+                logger.warning(f"STTService: WhisperLive sent the same completed segment {self.completed_segment_log_count} times: '{segment_text}'")
+            return False  # Don't log the duplicate
+        else:
+            # New completed segment - reset counter and log it
+            self.last_logged_completed_segment = segment_text
+            self.completed_segment_log_count = 1
+            return True
+
     async def _process_segments_intelligently(self, segments):
         """
         Process segments without relying on 'completed' flag.
