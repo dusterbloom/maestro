@@ -20,6 +20,10 @@ class STTService:
         self.last_segment_time = 0
         self.segment_stability_duration = 1.5  # seconds to wait for segment stability
         self.pending_segment_timer = None
+        
+        # Prevent duplicate transcript processing
+        self.last_sent_transcript = ""
+        self.transcript_cooldown = 3.0  # seconds before allowing same transcript again
 
     async def connect(self):
         try:
