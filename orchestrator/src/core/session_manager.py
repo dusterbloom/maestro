@@ -79,7 +79,13 @@ class SessionManager:
         
         elif event_type == "transcript.final":
             logger.info(f"Received transcript.final event for session {session_id}")
-            await self.handle_transcript(session, data.get("transcript", ""))
+            transcript = data.get("transcript", "")
+            # Forward transcript to frontend for display
+            await self.event_dispatcher.dispatch_event(session_id, Event(
+                type="transcript.final",
+                data={"transcript": transcript}
+            ))
+            await self.handle_transcript(session, transcript)
 
     async def handle_transcript(self, session: Session, transcript: str):
         start_time = time.time()
