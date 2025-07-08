@@ -166,5 +166,11 @@ class STTService:
     async def close(self):
         if self.is_connected:
             self.is_connected = False
+            
+            # Cancel any pending segment timer
+            if self.pending_segment_timer:
+                self.pending_segment_timer.cancel()
+                self.pending_segment_timer = None
+            
             await self.websocket.close()
             logger.info(f"STTService connection for session {self.session_id} closed.")
