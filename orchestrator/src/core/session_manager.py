@@ -82,34 +82,56 @@ class SessionManager:
             await self.handle_transcript(session, data.get("transcript", ""))
 
     async def handle_transcript(self, session: Session, transcript: str):
-        logger.info(f"Received transcript for session {session.session_id}: '{transcript}'")
+        start_time = time.time()
+        logger.info(f"Starting transcript processing for session {session.session_id}: '{transcript}' at {start_time}")
+        
         if not transcript.strip():
             logger.warning(f"Empty transcript received for session {session.session_id}")
             return
 
         session.transition_audio(AudioStateStatus.PROCESSING)
         
+        # LLM Processing
+        llm_start = time.time()
+        logger.info(f"Starting LLM processing for session {session.session_id}")
         llm_result = await self.conversation_service.process(transcript, {"session": session})
+        llm_duration = time.time() - llm_start
+        logger.info(f"LLM processing completed in {llm_duration:.3f}s for session {session.session_id}")
         
         if not llm_result.success:
+            logger.error(f"LLM processing failed for session {session.session_id}: {llm_result.error}")
             await self.event_dispatcher.dispatch_event(session.session_id, Event(type="session.error", data={"message": llm_result.error}))
             session.transition_audio(AudioStateStatus.IDLE)
             return
 
         response_text = llm_result.data
+        logger.info(f"LLM response for session {session.session_id}: '{response_text}'")
+        
+        # TTS Processing
+        tts_start = time.time()
+        logger.info(f"Starting TTS processing for session {session.session_id}")
         tts_result = await self.tts_service.process(response_text)
+        tts_duration = time.time() - tts_start
+        logger.info(f"TTS processing completed in {tts_duration:.3f}s for session {session.session_id}")
         
         if not tts_result.success:
+            logger.error(f"TTS processing failed for session {session.session_id}: {tts_result.error}")
             await self.event_dispatcher.dispatch_event(session.session_id, Event(type="session.error", data={"message": tts_result.error}))
             session.transition_audio(AudioStateStatus.IDLE)
             return
 
         session.transition_audio(AudioStateStatus.PLAYING)
         audio_chunk_size = len(tts_result.data)
+        
+        # Audio Dispatch
+        dispatch_start = time.time()
         logger.info(f"Dispatching audio chunk of {audio_chunk_size} bytes to session {session.session_id}")
         await self.event_dispatcher.dispatch_event(session.session_id, Event(
             type="response.audio.chunk",
             data={"audio_chunk": base64.b64encode(tts_result.data).decode('utf-8')}
         ))
-        logger.info(f"Audio chunk dispatched to session {session.session_id}")
+        dispatch_duration = time.time() - dispatch_start
+        
+        total_duration = time.time() - start_time
+        logger.info(f"Complete pipeline for session {session.session_id}: Total={total_duration:.3f}s (LLM={llm_duration:.3f}s, TTS={tts_duration:.3f}s, Dispatch={dispatch_duration:.3f}s)")
         session.transition_audio(AudioStateStatus.IDLE)
