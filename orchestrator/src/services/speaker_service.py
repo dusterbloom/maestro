@@ -34,6 +34,10 @@ class SpeakerService(BaseService):
         if session.speaker_state == SpeakerStateStatus.RECOGNIZED:
             return ServiceResult(success=True, data={"status": "already_recognized"})
 
+        # CRITICAL FIX: Prevent excessive buffer accumulation during identification
+        if session.speaker_state == SpeakerStateStatus.IDENTIFYING:
+            return ServiceResult(success=True, data={"status": "identification_in_progress"})
+
         if session.session_id not in self.session_audio_buffers:
             self.session_audio_buffers[session.session_id] = AudioBufferManager()
         
@@ -43,7 +47,7 @@ class SpeakerService(BaseService):
         buffer_ready = buffer_manager.add_audio_chunk(float_array)
 
         if buffer_ready:
-            logger.info(f"SpeakerService: Buffer ready for session {session.session_id}.")
+            logger.info(f"🎤 SpeakerService: Buffer ready for session {session.session_id}.")
             request_id = f"speaker_id_{session.session_id}"
             
             # This task will only be executed if another one with the same ID isn't already running.
