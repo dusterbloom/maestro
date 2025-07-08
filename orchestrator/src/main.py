@@ -33,12 +33,23 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             except asyncio.TimeoutError:
                 # Send keepalive ping to prevent connection timeout
                 logger.debug(f"Sending keepalive ping to session {session_id}")
-                await websocket.send_json({"type": "ping"})
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception as ping_error:
+                    logger.warning(f"Failed to send ping to session {session_id}: {ping_error}")
+                    break  # Exit loop if we can't send ping
+            except Exception as receive_error:
+                logger.warning(f"Error receiving data from session {session_id}: {receive_error}")
+                break  # Exit loop on any receive error
     except WebSocketDisconnect:
         logger.info(f"Client for session {session_id} disconnected.")
     except Exception as e:
         logger.error(f"An error occurred in the WebSocket loop for session {session_id}: {e}")
     finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass  # Ignore close errors
         session_manager.handle_disconnect(session_id)
 
 @app.get("/health")
