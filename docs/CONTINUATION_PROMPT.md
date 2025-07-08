@@ -15,7 +15,7 @@ The system has these **CRITICAL ISSUES**:
 **Evidence from logs**: Two identical embedding requests within 37ms for same session, each taking 10.8s, while user experiences 2+ second delays and disconnections.
 
 ## Your Mission
-Execute **Phase 1** of the architectural redesign plan located at `/docs/architecture-redesign-plan.md`. 
+Execute **Phase 1** of the architectural redesign plan located at `/docs/tasks/architecture-redesign-plan.md`. 
 
 **CRITICAL**: Read the full plan first, then implement Phase 1: "WebSocket-First Architecture"
 
@@ -24,7 +24,7 @@ Execute **Phase 1** of the architectural redesign plan located at `/docs/archite
 ### Step 1: Research Phase (MANDATORY)
 Before writing any code, you MUST:
 
-1. **Read the complete plan**: `/docs/architecture-redesign-plan.md`
+1. **Read the complete plan**: `/docs/tasks/architecture-redesign-plan.md`
 2. **Analyze current codebase structure**:
    ```bash
    find orchestrator/src -name "*.py" | head -20
