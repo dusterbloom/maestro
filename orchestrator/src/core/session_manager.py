@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import base64
+import time
 from fastapi import WebSocket
 from core.state_machine import StateMachine, ConnectionState, AudioStateStatus, Session
 from core.event_dispatcher import EventDispatcher, Event
