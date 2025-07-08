@@ -97,6 +97,11 @@ class STTService:
             
         current_time = time.time()
         
+        # CRITICAL FIX: If we already sent this exact transcript, don't process again
+        if hasattr(self, 'last_sent_transcript') and segment_text == self.last_sent_transcript:
+            logger.debug(f"STTService skipping already processed transcript: '{segment_text}'")
+            return
+        
         # Check if this is a genuinely new or significantly different segment
         if segment_text != self.last_segment_text:
             logger.info(f"STTService new segment text for session {self.session_id}: '{segment_text}'")
