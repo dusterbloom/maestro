@@ -68,8 +68,22 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError, ses
               onTranscript?.(event.data.transcript);
               break;
             case 'response.audio.chunk':
-              const audioBytes = Uint8Array.from(atob(event.data.audio_chunk), c => c.charCodeAt(0));
-              playerRef.current?.play(audioBytes.buffer);
+              console.log('🔊 Received audio chunk:', event.data.audio_chunk?.length, 'characters');
+              try {
+                const audioBytes = Uint8Array.from(atob(event.data.audio_chunk), c => c.charCodeAt(0));
+                console.log('🔊 Decoded audio chunk:', audioBytes.length, 'bytes');
+                
+                if (playerRef.current) {
+                  console.log('🔊 Playing audio chunk...');
+                  await playerRef.current.play(audioBytes.buffer);
+                  console.log('🔊 Audio chunk played successfully');
+                } else {
+                  console.error('🔊 Audio player not available');
+                }
+              } catch (audioError) {
+                console.error('🔊 Audio playback error:', audioError);
+                handleError(`Audio playback failed: ${audioError.message}`);
+              }
               break;
             case 'session.error':
               handleError(event.data.message);
