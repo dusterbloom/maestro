@@ -29,6 +29,7 @@ class STTService:
             logger.info(f"STTService for session {self.session_id} connected to WhisperLive.")
         except Exception as e:
             logger.error(f"STTService for session {self.session_id} failed to connect: {e}")
+            logger.error(f"STTService connection details - URL: {config.WHISPER_URL}, Session: {self.session_id}")
             self.is_connected = False
 
     async def _listen(self):
