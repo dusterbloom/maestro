@@ -21,8 +21,25 @@ export class MaestroWebSocket {
         };
 
         this.ws.onmessage = (event) => {
-            const parsedEvent = JSON.parse(event.data);
-            this.onEventCallback?.(parsedEvent);
+            console.log("[WebSocket] Message received:", event.data, "State:", this.ws?.readyState);
+            let parsedEvent;
+            try {
+                parsedEvent = JSON.parse(event.data);
+            } catch (err) {
+                console.error("[WebSocket] Failed to parse message:", event.data, err);
+                return;
+            }
+            if (parsedEvent.type === "ping") {
+                console.log("[WebSocket] Received ping from backend, sending pong.");
+                try {
+                    this.send({ type: "pong" });
+                    console.log("[WebSocket] Pong sent to backend.");
+                } catch (err) {
+                    console.error("[WebSocket] Failed to send pong:", err);
+                }
+            } else {
+                this.onEventCallback?.(parsedEvent);
+            }
         };
 
         this.ws.onerror = (event) => {

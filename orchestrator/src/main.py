@@ -29,6 +29,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             try:
                 # Increase timeout to handle long processing times (TTS generation can take 2-3s)
                 data = await asyncio.wait_for(websocket.receive_json(), timeout=30.0)
+                if isinstance(data, dict) and data.get("type") == "pong":
+                    logger.debug(f"Received pong from session {session_id}")
+                    continue  # Don't process further, just acknowledge pong
                 await session_manager.handle_event(session_id, data)
             except asyncio.TimeoutError:
                 # Send keepalive ping to prevent connection timeout

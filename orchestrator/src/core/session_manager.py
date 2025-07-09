@@ -54,15 +54,27 @@ class SessionManager:
         session = self.state_machine.get_session(session_id)
         if session:
             session.transition_connection(ConnectionState.DISCONNECTED)
-            self.state_machine.remove_session(session_id)
-        
-        self.event_dispatcher.disconnect(session_id)
-        
-        if session_id in self.stt_services:
-            asyncio.create_task(self.stt_services[session_id].close())
-            del self.stt_services[session_id]
-            
-        logger.info(f"Session {session_id} cleaned up.")
+            # Schedule session removal after a short grace period
+            async def delayed_cleanup():
+                await asyncio.sleep(5)  # 5 second grace period
+                # Double-check if session still exists and is disconnected
+                s = self.state_machine.get_session(session_id)
+                if s and s.connection_state == ConnectionState.DISCONNECTED:
+                    self.state_machine.remove_session(session_id)
+                    self.event_dispatcher.disconnect(session_id)
+                    if session_id in self.stt_services:
+                        await self.stt_services[session_id].close()
+                        del self.stt_services[session_id]
+                    logger.info(f"Session {session_id} cleaned up after grace period.")
+                else:
+                    logger.info(f"Session {session_id} was reconnected before cleanup.")
+            asyncio.create_task(delayed_cleanup())
+        else:
+            self.event_dispatcher.disconnect(session_id)
+            if session_id in self.stt_services:
+                asyncio.create_task(self.stt_services[session_id].close())
+                del self.stt_services[session_id]
+            logger.info(f"Session {session_id} cleaned up (no active session).")
 
     async def handle_event(self, session_id: str, event_data: dict):
         session = self.state_machine.get_session(session_id)
