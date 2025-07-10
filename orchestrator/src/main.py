@@ -13,6 +13,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from config import config
 
+# Speaker Recognition imports
+import torch
+import numpy as np
+import soundfile as sf
+import io
+from speechbrain.pretrained import SpeakerRecognition
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -261,6 +268,192 @@ class StreamingSentenceDetector:
             
         return sentence, remaining
 
+
+class MagicSpeakerRecognition:
+    """Drop-in speaker recognition - no state machines!"""
+    
+    def __init__(self, orchestrator):
+        self.orchestrator = orchestrator
+        self._models_loaded = False
+        self._loading_lock = asyncio.Lock()
+        
+    async def load_models(self):
+        """Async model loading"""
+        if self._models_loaded:
+            return
+            
+        async with self._loading_lock:
+            if not self._models_loaded:  # Double-check
+                logger.info("Loading speaker recognition models...")
+                start = time.time()
+                
+                # Move synchronous loading to executor
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: self._load_models_sync()
+                )
+                
+                self._models_loaded = True
+                logger.info(f"Models loaded in {time.time()-start:.2f}s")
+
+    def _load_models_sync(self):
+        """Synchronous model loading (run in executor)"""
+        self.model = SpeakerRecognition.from_hparams(
+            source="speechbrain/spkrec-ecapa-voxceleb",
+            savedir="models/speaker_recognition",
+            run_opts={"device": "cuda" if torch.cuda.is_available() else "cpu"}
+        )
+        self.audio_queues = {}  # session_id -> asyncio.Queue
+        self.known_speakers = {}  # speaker_id -> {"name": str, "embedding": tensor}
+        self.session_speakers = {}  # session_id -> speaker_id
+        
+    async def process_audio_chunk(self, session_id: str, audio_chunk: bytes):
+        """Queue audio without blocking main pipeline"""
+        if session_id not in self.audio_queues:
+            self.audio_queues[session_id] = asyncio.Queue()
+            asyncio.create_task(self._process_session(session_id))
+        
+        await self.audio_queues[session_id].put({
+            "audio": audio_chunk,
+            "timestamp": time.time()
+        })
+    
+    async def _process_session(self, session_id: str):
+        """Background processor per session"""
+        queue = self.audio_queues[session_id]
+        audio_buffer = []
+        last_check = 0
+        
+        while True:
+            try:
+                # Collect audio chunks
+                item = await asyncio.wait_for(queue.get(), timeout=30)
+                audio_buffer.append(item["audio"])
+                
+                # Process every 2 seconds (not 10!)
+                if time.time() - last_check >= 2.0 and len(audio_buffer) >= 20:
+                    # Combine audio
+                    audio_data = b''.join(audio_buffer[-30:])  # Last 3 seconds
+                    
+                    # Generate embedding (non-blocking)
+                    embedding = await self._get_embedding_async(audio_data)
+                    
+                    if embedding is not None:
+                        # Check if known speaker
+                        speaker_id = self._find_speaker(embedding)
+                        
+                        if speaker_id and speaker_id != self.session_speakers.get(session_id):
+                            # 🎉 RECOGNIZED SPEAKER!
+                            self.session_speakers[session_id] = speaker_id
+                            name = self.known_speakers[speaker_id]["name"]
+                            await self._inject_recognition(session_id, name)
+                            logger.info(f"🎯 Recognized speaker: {name}")
+                        
+                        elif not speaker_id and session_id not in self.session_speakers:
+                            # 🆕 NEW SPEAKER - capture their voice and ask for name
+                            new_id = f"spk_{len(self.known_speakers)}"
+                            self.known_speakers[new_id] = {
+                                "name": None,  # Will be filled when they respond
+                                "embedding": embedding
+                            }
+                            self.session_speakers[session_id] = new_id
+                            await self._inject_new_speaker(session_id)
+                            logger.info(f"🆕 New speaker detected, asking for name...")
+                    
+                    last_check = time.time()
+                    
+            except asyncio.TimeoutError:
+                # Session inactive, cleanup
+                del self.audio_queues[session_id]
+                break
+    
+    async def _get_embedding_async(self, audio_data: bytes) -> torch.Tensor:
+        """Generate embedding without blocking"""
+        loop = asyncio.get_event_loop()
+        
+        def _compute():
+            try:
+                # Convert audio bytes to numpy array
+                audio_io = io.BytesIO(audio_data)
+                audio_array, sample_rate = sf.read(audio_io)
+                
+                # Ensure mono and resample to 16kHz if needed
+                if len(audio_array.shape) > 1:
+                    audio_array = np.mean(audio_array, axis=1)
+                
+                # Convert to tensor
+                audio_tensor = torch.tensor(audio_array).unsqueeze(0).float()
+                
+                with torch.no_grad():
+                    embeddings = self.model.encode_batch(audio_tensor)
+                    return embeddings[0]
+            except Exception as e:
+                logger.error(f"Audio processing error: {e}")
+                return None
+        
+        return await loop.run_in_executor(None, _compute)
+    
+    def _find_speaker(self, embedding: torch.Tensor, threshold: float = 0.7):
+        """Find matching speaker by cosine similarity"""
+        for spk_id, data in self.known_speakers.items():
+            if data["name"]:  # Only match named speakers
+                similarity = torch.nn.functional.cosine_similarity(
+                    embedding.unsqueeze(0),
+                    data["embedding"].unsqueeze(0)
+                ).item()
+                
+                if similarity > threshold:
+                    return spk_id
+        return None
+    
+    async def _inject_recognition(self, session_id: str, name: str):
+        """Tell LLM about recognized speaker naturally"""
+        if session_id in self.orchestrator.session_history:
+            self.orchestrator.session_history[session_id].append({
+                "role": "system", 
+                "content": f"The speaker has been recognized as {name}. Greet them naturally and continue the conversation with their personal context."
+            })
+    
+    async def _inject_new_speaker(self, session_id: str):
+        """Tell LLM this is a new speaker and ask for their name"""
+        if session_id in self.orchestrator.session_history:
+            self.orchestrator.session_history[session_id].append({
+                "role": "system",
+                "content": "This is a new speaker. Ask for their name in a natural, friendly way so you can remember them for future conversations."
+            })
+    
+    def extract_name_from_response(self, session_id: str, text: str):
+        """Extract name when user responds to our name request"""
+        # Look for name patterns when we've asked for their name
+        if session_id in self.session_speakers:
+            spk_id = self.session_speakers[session_id]
+            current_speaker = self.known_speakers.get(spk_id)
+            
+            # Only extract if this speaker doesn't have a name yet
+            if current_speaker and not current_speaker["name"]:
+                import re
+                name_patterns = [
+                    r"my name is (\w+)",
+                    r"i'm (\w+)", 
+                    r"call me (\w+)",
+                    r"it's (\w+)",
+                    r"i am (\w+)",
+                    r"^(\w+)$"  # Just a single word response
+                ]
+                
+                for pattern in name_patterns:
+                    match = re.search(pattern, text.lower().strip())
+                    if match:
+                        name = match.group(1).title()
+                        # Validate it's a reasonable name (not common words)
+                        common_words = {"yes", "no", "okay", "sure", "hello", "hi", "thanks", "please"}
+                        if name.lower() not in common_words and len(name) > 1:
+                            self.known_speakers[spk_id]["name"] = name
+                            logger.info(f"✅ Learned new speaker name: {name}")
+                            return name
+                return None
+
 class VoiceOrchestrator:
     def __init__(self):
         self.whisper_host = config.WHISPER_URL.split("://")[1].split(":")[0]
@@ -276,11 +469,32 @@ class VoiceOrchestrator:
         # Initialize streaming sentence detector for pipeline
         self.streaming_detector = StreamingSentenceDetector()
         
+        # Initialize speaker recognition (lazy loaded)
+        self.speaker_recognition = MagicSpeakerRecognition(self)
+        self._ready = False
+        
+        # Session tracking
+        self.session_history = {}  # session_id -> list of {"user": str, "assistant": str}
+        self.active_tts_sessions = {}  # session_id -> {"thread": Thread, "queue": Queue, "abort_flag": Event}
+        
+    async def startup(self):
+        """Async initialization"""
+        await self.speaker_recognition.load_models()
+        self._ready = True
+        
+    def check_ready(self):
+        """Raise if not ready"""
+        if not self._ready:
+            raise RuntimeError("Orchestrator not initialized")
+        
         # Simple session memory for conversation continuity
         self.session_history = {}  # session_id -> list of {"user": str, "assistant": str}
         
         # Track active TTS sessions for interruption capability
         self.active_tts_sessions = {}  # session_id -> {"thread": Thread, "queue": Queue, "abort_flag": Event}
+        
+        # Initialize speaker recognition
+        self.speaker_recognition = MagicSpeakerRecognition(self)
         
     async def generate_response(self, text: str, context: str = "") -> str:
         """Generate response using Ollama with streaming"""
@@ -413,10 +627,11 @@ class VoiceOrchestrator:
             if session_id not in self.session_history:
                 self.session_history[session_id] = []
             
-            # Track this session for interruption capability
+            # Track this session for interruption capability with task management
             self.active_tts_sessions[session_id] = {
                 "abort_flag": abort_flag,
-                "start_time": time.time()
+                "start_time": time.time(),
+                "tasks": []  # Store background tasks for proper cleanup
             }
             
             # Build context-aware prompt with recent conversation history
@@ -488,11 +703,16 @@ class VoiceOrchestrator:
                         
                         if tts_response.status_code == 200:
                             # Put audio chunk in result queue for immediate streaming
+                            # Ensure audio data is bytes before queueing
+                            audio_data = tts_response.content
+                            if isinstance(audio_data, str):
+                                audio_data = audio_data.encode('utf-8')
+                            
                             audio_result_queue.put({
                                 "type": "audio",
                                 "sequence": sentence_count,
                                 "text": sentence,
-                                "audio_data": tts_response.content
+                                "audio_data": audio_data
                             })
                             logger.info(f"✅ TTS Worker: Sentence {sentence_count} ready! {len(tts_response.content)} bytes")
                         else:
@@ -513,9 +733,12 @@ class VoiceOrchestrator:
                     finally:
                         tts_queue.task_done()
             
-            # Start TTS worker thread
+            # Start TTS worker thread and track it for interruption
             tts_thread = threading.Thread(target=tts_worker, daemon=True)
             tts_thread.start()
+            
+            # Add thread to session tracking for proper cleanup
+            self.active_tts_sessions[session_id]["tasks"].append(tts_thread)
             
             # Stream LLM tokens with sentence boundary detection
             def llm_processor():
@@ -588,9 +811,12 @@ class VoiceOrchestrator:
                 else:
                     tts_queue.put("DONE")
             
-            # Start LLM processing in background
+            # Start LLM processing in background and track it
             llm_thread = threading.Thread(target=llm_processor, daemon=True)
             llm_thread.start()
+            
+            # Add LLM thread to session tracking for proper cleanup
+            self.active_tts_sessions[session_id]["tasks"].append(llm_thread)
             
             # Yield audio chunks in real-time as they become available
             sentences_received = 0
@@ -834,8 +1060,8 @@ class VoiceOrchestrator:
         except Exception as e:
             logger.error(f"Context storage error: {e}")
     
-    def interrupt_tts_session(self, session_id: str) -> bool:
-        """Interrupt active TTS generation for a specific session"""
+    async def interrupt_tts_session(self, session_id: str) -> bool:
+        """Interrupt active TTS generation for a specific session with proper cleanup"""
         try:
             if session_id in self.active_tts_sessions:
                 session_data = self.active_tts_sessions[session_id]
@@ -844,9 +1070,24 @@ class VoiceOrchestrator:
                 if 'abort_flag' in session_data:
                     session_data['abort_flag'].set()
                     logger.info(f"TTS interruption signal sent for session {session_id}")
+
+                # Cancel any running tasks
+                if 'tasks' in session_data:
+                    for task in session_data.get('tasks', []):
+                        if not task.done():
+                            task.cancel()
+                            logger.info(f"Cancelled task for session {session_id}")
+
+                # Close WebSocket connection if exists
+                if 'websocket' in session_data and session_data['websocket']:
+                    try:
+                        await session_data['websocket'].close()
+                        logger.info(f"Closed WebSocket connection for session {session_id}")
+                    except Exception as e:
+                        logger.warning(f"Error closing WebSocket for session {session_id}: {e}")
                 
-                # Clear the session from active tracking
-                del self.active_tts_sessions[session_id]
+                # Clean up session immediately
+                await self.cleanup_session(session_id)
                 logger.info(f"TTS session {session_id} interrupted and cleaned up")
                 return True
             else:
@@ -857,8 +1098,50 @@ class VoiceOrchestrator:
             logger.error(f"Error interrupting TTS session {session_id}: {e}")
             return False
     
+    async def cleanup_session(self, session_id: str):
+        """Properly clean up session resources including threads and tasks"""
+        try:
+            if session_id in self.active_tts_sessions:
+                session_data = self.active_tts_sessions[session_id]
+                
+                # Stop any running background tasks and threads
+                if 'tasks' in session_data:
+                    for task_or_thread in session_data.get('tasks', []):
+                        try:
+                            # Handle asyncio.Task objects
+                            if hasattr(task_or_thread, 'cancel') and hasattr(task_or_thread, 'done'):
+                                if not task_or_thread.done():
+                                    task_or_thread.cancel()
+                                    try:
+                                        await task_or_thread
+                                    except asyncio.CancelledError:
+                                        pass  # Expected when cancelling
+                                    logger.info(f"Cancelled asyncio task for session {session_id}")
+                            
+                            # Handle threading.Thread objects
+                            elif hasattr(task_or_thread, 'is_alive') and hasattr(task_or_thread, 'join'):
+                                if task_or_thread.is_alive():
+                                    # For daemon threads, we can't forcefully stop them,
+                                    # but setting the abort flag should make them exit
+                                    logger.info(f"Thread {task_or_thread.name} for session {session_id} should stop via abort flag")
+                                    # Give thread a moment to see abort flag and exit
+                                    task_or_thread.join(timeout=0.1)
+                                    
+                        except Exception as e:
+                            logger.warning(f"Error stopping task/thread for session {session_id}: {e}")
+                
+                # Set abort flag as final signal
+                if 'abort_flag' in session_data:
+                    session_data['abort_flag'].set()
+                
+                # Remove from active tracking
+                del self.active_tts_sessions[session_id]
+                logger.info(f"Cleaned up session {session_id}")
+        except Exception as e:
+            logger.error(f"Error cleaning up session {session_id}: {e}")
+    
     def cleanup_completed_session(self, session_id: str):
-        """Clean up a completed TTS session"""
+        """Clean up a completed TTS session (synchronous version)"""
         try:
             if session_id in self.active_tts_sessions:
                 del self.active_tts_sessions[session_id]
@@ -869,9 +1152,20 @@ class VoiceOrchestrator:
 # Initialize orchestrator
 orchestrator = VoiceOrchestrator()
 
+@app.on_event("startup")
+async def startup_event():
+    """Handle async initialization"""
+    await orchestrator.startup()
+
 @app.get("/health")
 async def health():
     """Health check endpoint"""
+    return {
+        "status": "ok" if orchestrator._ready else "starting",
+        "services": {
+            "speaker_recognition": orchestrator.speaker_recognition._models_loaded
+        }
+    }
     return JSONResponse({
         "status": "ok", 
         "memory_enabled": orchestrator.memory_enabled,
@@ -1028,6 +1322,8 @@ async def process_transcript_stream(request: TranscriptRequest):
             """Generate streaming audio response"""
             yield f"data: {json.dumps({'type': 'text', 'data': response})}\n\n"
             
+            if not orchestrator._ready:
+                raise HTTPException(503, "Service starting up")
             async for audio_chunk in orchestrator.synthesize_stream(response):
                 if audio_chunk:
                     # Convert binary chunk to base64 for streaming
@@ -1098,8 +1394,19 @@ async def ultra_fast(request: TranscriptRequest):
             
             logger.info(f"Ultra-Fast: Processing complete sentence: {cleaned_sentence}")
         
+        # 🎤 SPEAKER RECOGNITION: Check if user provided their name
+        extracted_name = orchestrator.speaker_recognition.extract_name_from_response(request.session_id, cleaned_sentence)
+        if extracted_name:
+            # User just told us their name - acknowledge it naturally
+            if request.session_id not in orchestrator.session_history:
+                orchestrator.session_history[request.session_id] = []
+            orchestrator.session_history[request.session_id].append({
+                "role": "system",
+                "content": f"The user just told you their name is {extracted_name}. Acknowledge this warmly and remember it for future conversations."
+            })
+        
         # 2. Direct streaming call with sentence-by-sentence TTS
-        text_response, audio_data = orchestrator.stream_direct_with_sentence_streaming(cleaned_sentence, request.session_id)
+        text_response, audio_data = orchestrator.stream_direct_with_real_time_streaming(cleaned_sentence, request.session_id)
         
         total_time = (time.time() - start_time) * 1000
         logger.info(f"Ultra-Fast: Total = {total_time:.2f}ms")
@@ -1184,6 +1491,16 @@ async def ultra_fast_stream(request: TranscriptRequest):
                 # Initialize session history if not exists
                 if request.session_id not in orchestrator.session_history:
                     orchestrator.session_history[request.session_id] = []
+                
+                # 🎤 SPEAKER RECOGNITION: Check if user provided their name
+                extracted_name = orchestrator.speaker_recognition.extract_name_from_response(request.session_id, cleaned_sentence)
+                if extracted_name:
+                    # User just told us their name - acknowledge it naturally
+                    if request.session_id in orchestrator.session_history:
+                        orchestrator.session_history[request.session_id].append({
+                            "role": "system",
+                            "content": f"The user just told you their name is {extracted_name}. Acknowledge this warmly and remember it for future conversations."
+                        })
                 
                 # Build context-aware prompt
                 history = orchestrator.session_history[request.session_id]
@@ -1344,7 +1661,7 @@ async def interrupt_tts(request: InterruptRequest):
         logger.info(f"🛑 TTS INTERRUPTION: Received interrupt request for session {request.session_id}")
         
         # Attempt to interrupt the session
-        success = orchestrator.interrupt_tts_session(request.session_id)
+        success = await orchestrator.interrupt_tts_session(request.session_id)
         
         interrupt_time = (time.time() - start_time) * 1000
         
@@ -1411,7 +1728,7 @@ async def process_transcript_pipeline(request: TranscriptRequest):
             try:
                 # Use direct stream method for maximum speed
                 start_time = time.time()
-                text_response, audio_data = orchestrator.stream_direct_with_sentence_streaming(cleaned_sentence, request.session_id)
+                text_response, audio_data = orchestrator.stream_direct_with_real_time_streaming(cleaned_sentence, request.session_id)
                 
                 # Stream response as JSON events
                 yield f"data: {json.dumps({'type': 'text', 'text': text_response})}\\n\\n"
@@ -1442,6 +1759,18 @@ async def process_transcript_pipeline(request: TranscriptRequest):
     except Exception as e:
         logger.error(f"Ultra-low latency pipeline error: {e}")
         return {"error": str(e)}, 500
+
+# 🎤 SPEAKER RECOGNITION: Audio chunk processing endpoint
+@app.post("/process-audio-chunk")
+async def process_audio_chunk(session_id: str, audio_data: bytes):
+    """Process audio chunk for speaker recognition (optional endpoint)"""
+    try:
+        # Queue audio chunk for speaker recognition processing
+        await orchestrator.speaker_recognition.process_audio_chunk(session_id, audio_data)
+        return {"status": "queued", "session_id": session_id}
+    except Exception as e:
+        logger.error(f"Audio chunk processing error: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.on_event("startup")
 async def startup_event():

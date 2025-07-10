@@ -139,23 +139,40 @@ export class AudioRecorder {
   cleanup() {
     this.stop();
     
+    // Disconnect and clean up audio processing chain
     if (this.workletNode) {
-      this.workletNode.disconnect();
+      try {
+        this.workletNode.disconnect();
+        this.workletNode.port.close();
+      } catch (e) {
+        console.warn('Error disconnecting worklet node:', e);
+      }
       this.workletNode = null;
     }
     
     if (this.mediaStreamSource) {
-      this.mediaStreamSource.disconnect();
+      try {
+        this.mediaStreamSource.disconnect();
+      } catch (e) {
+        console.warn('Error disconnecting media stream source:', e);
+      }
       this.mediaStreamSource = null;
     }
     
     if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop());
+      this.stream.getTracks().forEach(track => {
+        track.stop();
+        console.log(`Stopped ${track.kind} track`);
+      });
       this.stream = null;
     }
     
-    if (this.audioContext) {
-      this.audioContext.close();
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close().then(() => {
+        console.log('Recording audio context closed successfully');
+      }).catch(e => {
+        console.warn('Error closing recording audio context:', e);
+      });
       this.audioContext = null;
     }
   }
@@ -284,20 +301,28 @@ export class AudioPlayer {
   }
   
   /**
-   * Stop all currently playing audio immediately (for barge-in)
+   * Stop all currently playing audio immediately (for barge-in) with proper cleanup
    */
   stopAll() {
     console.log(`Stopping ${this.activeSources.length} active audio sources`);
-    this.activeSources.forEach(source => {
+    this.activeSources.forEach((source, index) => {
       try {
+        // Disconnect first to prevent audio artifacts
+        source.disconnect();
+        // Then stop the source
         source.stop();
+        console.log(`Stopped audio source ${index + 1}`);
       } catch (e) {
-        // Source might already be stopped
-        console.warn('Failed to stop audio source:', e);
+        // Source might already be stopped or disconnected
+        console.warn(`Failed to stop audio source ${index + 1}:`, e);
       }
     });
     this.activeSources = [];
-    this.onPlaybackEndCallback?.();
+    
+    // Ensure playback end callback is called
+    if (this.onPlaybackEndCallback) {
+      this.onPlaybackEndCallback();
+    }
   }
   
   /**
@@ -323,6 +348,14 @@ export class AudioPlayer {
   
   cleanup() {
     this.stopAll();
-    this.audioContext.close();
+    
+    // Close audio context properly
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close().then(() => {
+        console.log('Audio context closed successfully');
+      }).catch(e => {
+        console.warn('Error closing audio context:', e);
+      });
+    }
   }
 }

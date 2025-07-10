@@ -1,8 +1,54 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useReducer } from 'react';
 import { VoiceWebSocket } from '@/lib/websocket';
 import { AudioRecorder, AudioPlayer } from '@/lib/audio';
+
+// Audio queue management with useReducer for better state control
+interface AudioQueueItem {
+  sequence: number;
+  audioData: string;
+  text: string;
+}
+
+interface AudioQueueState {
+  queue: AudioQueueItem[];
+  nextToPlay: number;
+}
+
+type AudioQueueAction = 
+  | { type: 'ADD_AUDIO'; payload: AudioQueueItem }
+  | { type: 'CLEAR_QUEUE' }
+  | { type: 'REMOVE_PLAYED'; sequence: number }
+  | { type: 'RESET' };
+
+const audioQueueReducer = (state: AudioQueueState, action: AudioQueueAction): AudioQueueState => {
+  switch (action.type) {
+    case 'ADD_AUDIO':
+      return {
+        ...state,
+        queue: [...state.queue, action.payload]
+      };
+    case 'CLEAR_QUEUE':
+      return {
+        queue: [],
+        nextToPlay: 1
+      };
+    case 'REMOVE_PLAYED':
+      return {
+        ...state,
+        queue: state.queue.filter(item => item.sequence !== action.sequence),
+        nextToPlay: state.nextToPlay + 1
+      };
+    case 'RESET':
+      return {
+        queue: [],
+        nextToPlay: 1
+      };
+    default:
+      return state;
+  }
+};
 
 interface VoiceButtonProps {
   onStatusChange?: (status: 'idle' | 'connecting' | 'connected' | 'recording' | 'processing' | 'error') => void;
@@ -20,14 +66,27 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
   const playerRef = useRef<AudioPlayer | null>(null);
   const sessionIdRef = useRef<string>(`session_${Date.now()}`);
   
-  // TTS interruption control
+  // TTS interruption control with proper coordination
   const currentStreamControllerRef = useRef<AbortController | null>(null);
   const voiceActivityRef = useRef<boolean>(false);
   const bargeInTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isProcessingInterruptionRef = useRef<boolean>(false);
   
-  // Audio queue management at component level for interruption access
-  const audioQueueRef = useRef<Array<{sequence: number, audioData: string, text: string}>>([]);
+  // Audio queue management using useReducer for better state control
+  const [audioQueueState, dispatchAudioQueue] = useReducer(audioQueueReducer, {
+    queue: [],
+    nextToPlay: 1
+  });
+  
+  // Use refs for audio queue access in async contexts to avoid stale closures
+  const audioQueueRef = useRef<AudioQueueItem[]>([]);
   const nextToPlayRef = useRef<number>(1);
+  
+  // Sync reducer state with refs for async access
+  useEffect(() => {
+    audioQueueRef.current = audioQueueState.queue;
+    nextToPlayRef.current = audioQueueState.nextToPlay;
+  }, [audioQueueState]);
   
   const updateStatus = useCallback((newStatus: typeof status) => {
     setStatus(newStatus);
@@ -40,45 +99,41 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
     onError?.(error);
   }, [onError, updateStatus]);
   
+
+  const clearAudioQueue = useCallback(() => {
+    console.log(`🧹 Clearing audio queue: ${audioQueueRef.current.length} pending sentences removed`);
+    dispatchAudioQueue({ type: 'CLEAR_QUEUE' });
+    // Refs will be updated by the useEffect above
+  }, []);
+
   const handleBargeIn = useCallback(async () => {
-    console.log('🛑 Audio Pipeline: USER INTERRUPT - Stopping TTS and starting recording');
+    // Prevent multiple simultaneous interruptions
+    if (isProcessingInterruptionRef.current) {
+      console.log('🛑 Interruption already in progress, skipping duplicate request');
+      return;
+    }
     
-    // 1. Send server-side TTS interruption request immediately
-    if (whisperWsRef.current) {
-      try {
-        console.log('   → Sending server TTS interruption request');
-        const result = await whisperWsRef.current.sendInterruptTts(sessionIdRef.current);
-        if (result.success) {
-          console.log('   ✅ Server TTS interruption successful');
-        } else {
-          console.warn('   ⚠️ Server TTS interruption failed:', result.message);
-        }
-      } catch (error) {
-        console.error('   ❌ Server TTS interruption error:', error);
+    isProcessingInterruptionRef.current = true;
+    console.log('🛑 Audio Pipeline: USER INTERRUPT - User can ALWAYS stop assistant');
+    
+    try {
+      // 1. INSTANT: Stop all audio playback first (ALWAYS allowed)
+      if (playerRef.current) {
+        console.log('   → Stopping audio playback immediately (user override)');
+        playerRef.current.stopAll();
       }
-    }
-    
-    // 2. Abort any ongoing TTS generation request (frontend control)
-    if (currentStreamControllerRef.current) {
-      console.log('   → Aborting frontend TTS generation request');
-      currentStreamControllerRef.current.abort();
-      currentStreamControllerRef.current = null;
-    }
-    
-    // 3. Stop all audio playback immediately (frontend audio control)
-    if (playerRef.current) {
-      console.log('   → Stopping audio playback');
-      playerRef.current.stopAll();
-    }
-    
-    // 4. Update isPlaying state since we interrupted the audio
-    setIsPlaying(false);
-    console.log('   → Set isPlaying=false due to interruption');
-    
-    // 5. Start recording immediately if not already recording and connected
-    if (!isRecording && status === 'connected') {
-      // Use direct recording start to avoid circular dependency
-      if (whisperWsRef.current?.isConnected() && recorderRef.current) {
+      
+      // 2. INSTANT: Clear all pending TTS sentences (user takes priority)
+      console.log('   → Clearing audio queue - user interruption overrides all');
+      clearAudioQueue();
+      
+      // 3. INSTANT: Update state to reflect stopped audio
+      setIsPlaying(false);
+      console.log('   → Set isPlaying=false due to user interruption');
+      
+      // 4. INSTANT: Start recording if conditions are met
+      if (!isRecording && status === 'connected' && whisperWsRef.current?.isConnected() && recorderRef.current) {
+        console.log('   → Starting recording immediately (user wants to speak)');
         setIsRecording(true);
         updateStatus('recording');
         
@@ -88,14 +143,41 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
           }
         });
       }
+      
+      // 5. BACKGROUND: Send server-side TTS interruption request (don't await)
+      if (whisperWsRef.current) {
+        console.log('   → Sending server TTS interruption request (background)');
+        whisperWsRef.current.sendInterruptTts(sessionIdRef.current).then(result => {
+          if (result.success) {
+            console.log('   ✅ Server TTS interruption successful');
+          } else {
+            console.warn('   ⚠️ Server TTS interruption failed:', result.message);
+          }
+        }).catch(error => {
+          console.error('   ❌ Server TTS interruption error:', error);
+        });
+      }
+      
+      // 6. BACKGROUND: Abort any ongoing TTS generation request (frontend control)
+      if (currentStreamControllerRef.current) {
+        console.log('   → Aborting frontend TTS generation request');
+        currentStreamControllerRef.current.abort();
+        currentStreamControllerRef.current = null;
+      }
+      
+      console.log('   ✅ User interruption completed - assistant stopped, user can speak');
+      
+    } catch (error) {
+      console.error('   ❌ Error during user interruption:', error);
+    } finally {
+      // Reset the processing flag after a short delay to prevent rapid retriggering
+      setTimeout(() => {
+        isProcessingInterruptionRef.current = false;
+      }, 100);
     }
-  }, [isRecording, status, updateStatus]);
+  }, [isRecording, status, updateStatus, clearAudioQueue]);
   
-  const clearAudioQueue = useCallback(() => {
-    console.log(`🧹 Clearing audio queue: ${audioQueueRef.current.length} pending sentences removed`);
-    audioQueueRef.current = [];
-    nextToPlayRef.current = 1;
-  }, []);
+
 
   const abortCurrentStream = useCallback(() => {
     if (currentStreamControllerRef.current) {
@@ -121,8 +203,17 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
       try {
         updateStatus('connecting');
         
-        // Initialize direct connection to WhisperLive
+        // Initialize direct connection to WhisperLive with validation
         const whisperWsUrl = process.env.NEXT_PUBLIC_WHISPER_WS_URL || 'ws://localhost:9090';
+        
+        // Validate WebSocket URL format
+        try {
+          new URL(whisperWsUrl);
+        } catch (urlError) {
+          throw new Error(`Invalid WhisperLive WebSocket URL: ${whisperWsUrl}`);
+        }
+        
+        console.log(`🔌 Initializing WhisperLive connection to: ${whisperWsUrl}`);
         const whisperWs = new VoiceWebSocket(whisperWsUrl);
         whisperWsRef.current = whisperWs;
         
@@ -135,7 +226,11 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
         });
         
         whisperWs.onDisconnect(() => {
-          if (mounted) updateStatus('idle');
+          if (mounted) {
+            console.log('🔌 WhisperLive disconnected - updating status to idle');
+            console.log(`   → Connection state when disconnected: isRecording=${isRecording}, isPlaying=${isPlaying}`);
+            updateStatus('idle');
+          }
         });
         
         whisperWs.onTranscript((transcript) => {
@@ -147,13 +242,37 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
         
         whisperWs.onSentence(async (sentence) => {
           if (mounted) {
-            console.log('Complete sentence received:', sentence);
-            console.log(`🔍 SENTENCE CHECK: isPlaying=${isPlaying}, isRecording=${isRecording}, mounted=${mounted}`);
+            console.log('📝 Complete sentence received:', sentence);
+            console.log(`🔍 SENTENCE CHECK: isPlaying=${isPlaying}, isRecording=${isRecording}, mounted=${mounted}, wsState=${whisperWs.isConnected() ? 'connected' : 'disconnected'}`);
+            console.log(`🔍 QUEUE STATE: queueLength=${audioQueueRef.current.length}, nextToPlay=${nextToPlayRef.current}`);
             
-            // 🚨 CRITICAL: Completely block new TTS requests while audio is playing
+            // ================================================================================================
+            // 🚨 IMPORTANT DISTINCTION:
+            // 
+            // 1. SENTENCE PROCESSING BLOCK (below): Prevents multiple LLM responses from overlapping
+            //    - Blocks new sentence processing while assistant is speaking
+            //    - Prevents cascading voices and audio chaos
+            //    - This is a TECHNICAL protection for audio pipeline stability
+            //
+            // 2. VOICE INTERRUPTION (above): User can ALWAYS interrupt at any moment  
+            //    - Voice activity detection works regardless of any blocks
+            //    - User interruption overrides ALL sentence processing blocks
+            //    - This is USER CONTROL - user is always in charge
+            // ================================================================================================
+            
+            // 🚨 CRITICAL: Block new TTS sentence processing while audio is actively playing
+            // BUT still allow voice interruption via barge-in (this only blocks sentence processing)
             if (isPlaying) {
-              console.log('🚨 BLOCKING NEW TTS: Audio is currently playing - ignoring sentence to prevent cascading voices');
-              return; // Do NOT process new sentences while TTS is playing
+              console.log('🚨 BLOCKING NEW SENTENCE: Audio is currently playing - ignoring new sentence to prevent overlapping voices');
+              console.log(`   → isPlaying=${isPlaying} (user can still interrupt via voice)`);
+              return; // Do NOT process new sentences while TTS is actively playing
+            }
+            
+            // Also block if there are queued sentences from the current response
+            if (audioQueueRef.current.length > 0) {
+              console.log('🚨 BLOCKING NEW SENTENCE: Audio queue has pending sentences - ignoring new sentence');
+              console.log(`   → queueLength=${audioQueueRef.current.length} (user can still interrupt via voice)`);
+              return; // Do NOT process new sentences while queue has pending audio
             }
             
             // Only process if no audio is currently playing
@@ -220,40 +339,57 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
               const decoder = new TextDecoder();
               let buffer = '';
               let sentenceCount = 0;
-              // Use component-level queue refs for interruption access
-              audioQueueRef.current = []; // Reset queue for new stream
-              nextToPlayRef.current = 1;
               
-              const playNextInQueue = async () => {
-                if (isPlaying) return;
+              // Reset queue for new stream using reducer
+              dispatchAudioQueue({ type: 'RESET' });
+              
+              const playNextInQueue = async (currentQueue?: AudioQueueItem[]) => {
+                // Use passed queue or fall back to ref
+                const queueToUse = currentQueue || audioQueueRef.current;
+                const nextToPlay = nextToPlayRef.current;
                 
-                // Find the next sentence to play
-                const nextItem = audioQueueRef.current.find(item => item.sequence === nextToPlayRef.current);
-                if (!nextItem) return;
+                console.log(`🎭 playNextInQueue called: isPlaying=${isPlaying}, queueLength=${queueToUse.length}, nextToPlay=${nextToPlay}`);
+                
+                if (isPlaying) {
+                  console.log('🛑 Already playing, skipping playNextInQueue');
+                  return;
+                }
+                
+                // Find the next sentence to play using passed queue or refs
+                const nextItem = queueToUse.find((item: AudioQueueItem) => item.sequence === nextToPlay);
+                if (!nextItem) {
+                  console.log(`❌ No item found for sequence ${nextToPlay} in queue of ${queueToUse.length} items`);
+                  console.log(`🔍 Queue contents:`, queueToUse.map(item => `seq${item.sequence}`).join(', '));
+                  return;
+                }
                 
                 setIsPlaying(true);  // ✅ FIX: Use React state setter, not local variable
                 console.log(`🎵 Playing sentence ${nextItem.sequence}: ${nextItem.text.slice(0, 30)}...`);
                 
                 try {
                   // Decode base64 audio data
+                  console.log(`🔊 Decoding audio data for sentence ${nextItem.sequence}: ${nextItem.audioData.slice(0, 100)}...`);
                   const audioBytes = Uint8Array.from(atob(nextItem.audioData), c => c.charCodeAt(0));
+                  console.log(`🔊 Decoded ${audioBytes.length} bytes for sentence ${nextItem.sequence}`);
                   
                   if (playerRef.current) {
+                    console.log(`🎵 Starting audio playback for sentence ${nextItem.sequence}`);
                     await playerRef.current.play(audioBytes.buffer);
                     console.log(`✅ Sentence ${nextItem.sequence} played successfully!`);
+                  } else {
+                    console.error(`❌ No audio player available for sentence ${nextItem.sequence}`);
                   }
                   
-                  // Remove played item and move to next
-                  const index = audioQueueRef.current.findIndex(item => item.sequence === nextToPlayRef.current);
-                  if (index >= 0) {
-                    audioQueueRef.current.splice(index, 1);
-                  }
-                  nextToPlayRef.current++;
+                  // Remove played item using reducer action
+                  console.log(`🗑️ Removing played sentence ${nextToPlayRef.current}, queue had ${audioQueueRef.current.length} items`);
+                  dispatchAudioQueue({ type: 'REMOVE_PLAYED', sequence: nextToPlayRef.current });
                   
                   // Check if more sentences are queued, only set isPlaying=false when done
-                  if (audioQueueRef.current.length === 0) {
+                  if (audioQueueRef.current.length <= 1) { // Will be 0 after removal
                     setIsPlaying(false);  // ✅ Only stop when queue is empty
                     console.log('🎵 All audio sentences completed, setting isPlaying=false');
+                  } else {
+                    console.log(`🎵 More sentences queued (${audioQueueRef.current.length - 1} remaining), continuing playback`);
                   }
                   
                   // Play next item if available
@@ -262,14 +398,10 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                 } catch (audioError) {
                   console.error(`❌ Failed to play sentence ${nextItem.sequence}:`, audioError);
                   
-                  // Remove failed item and check if queue is empty
-                  const index = audioQueueRef.current.findIndex(item => item.sequence === nextToPlayRef.current);
-                  if (index >= 0) {
-                    audioQueueRef.current.splice(index, 1);
-                  }
-                  nextToPlayRef.current++;
+                  // Remove failed item using reducer action
+                  dispatchAudioQueue({ type: 'REMOVE_PLAYED', sequence: nextToPlayRef.current });
                   
-                  if (audioQueueRef.current.length === 0) {
+                  if (audioQueueRef.current.length <= 1) { // Will be 0 after removal
                     setIsPlaying(false);
                     console.log('🎵 Audio queue empty after error, setting isPlaying=false');
                   }
@@ -308,17 +440,32 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
                         if (data.type === 'sentence_audio') {
                           sentenceCount++;
                           console.log(`📝 Received sentence ${data.sequence}: ${data.text.slice(0, 30)}...`);
+                          console.log(`🎵 Audio data length: ${data.audio_data?.length || 0} characters`);
                           
-                          // Add to audio queue
-                          audioQueueRef.current.push({
-                            sequence: data.sequence,
-                            audioData: data.audio_data,
-                            text: data.text
+                          // Add to audio queue using reducer
+                          dispatchAudioQueue({
+                            type: 'ADD_AUDIO',
+                            payload: {
+                              sequence: data.sequence,
+                              audioData: data.audio_data,
+                              text: data.text
+                            }
                           });
+                          
+                          console.log(`📊 Queue state: nextToPlay=${nextToPlayRef.current}, queueLength=${audioQueueRef.current.length + 1}`);
                           
                           // Start playing if this is the next expected sentence
                           if (data.sequence === nextToPlayRef.current) {
-                            playNextInQueue();
+                            console.log(`🚀 Starting playback for sequence ${data.sequence}`);
+                            // Pass the updated queue directly to avoid ref synchronization delay
+                            const updatedQueue = [...audioQueueRef.current, {
+                              sequence: data.sequence,
+                              audioData: data.audio_data,
+                              text: data.text
+                            }];
+                            playNextInQueue(updatedQueue);
+                          } else {
+                            console.log(`⏳ Queuing sequence ${data.sequence}, waiting for ${nextToPlayRef.current}`);
                           }
                           
                         } else if (data.type === 'complete') {
@@ -370,59 +517,19 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
           
           // 🔍 DEBUG: Log voice activity levels to diagnose detection issues
           if (level > 0.001) { // Only log when there's some audio
-            console.log(`🎤 VOICE DEBUG: level=${level.toFixed(4)}, active=${isVoiceActive}, isPlaying=${isPlaying}, isRecording=${isRecording}, threshold=${recorder.getVoiceActivityThreshold()}`);
+            // console.log(`🎤 VOICE DEBUG: level=${level.toFixed(4)}, active=${isVoiceActive}, isPlaying=${isPlaying}, isRecording=${isRecording}, threshold=${recorder.getVoiceActivityThreshold()}`);
           }
           
-          // 🚨 IMMEDIATE INTERRUPTION: If user speaks while TTS is playing OR queued
+          // 🚨 IMMEDIATE INTERRUPTION: User can ALWAYS interrupt assistant at any moment
+          // This voice interruption logic overrides ALL sentence processing blocks
           const hasPendingAudio = audioQueueRef.current.length > 0;
           if (isVoiceActive && (isPlaying || hasPendingAudio) && !isRecording) {
-            console.log('🚨 IMMEDIATE BARGE-IN: Voice detected while TTS playing/queued - INSTANT STOP');
+            console.log('🚨 IMMEDIATE BARGE-IN: User interrupting assistant - ALWAYS ALLOWED');
             console.log(`   → isPlaying=${isPlaying}, pendingAudio=${hasPendingAudio}, queueSize=${audioQueueRef.current.length}`);
+            console.log('   → This interruption overrides any sentence processing blocks');
             
-            // 1. INSTANT: Stop all audio playback
-            if (playerRef.current) {
-              playerRef.current.stopAll();
-              console.log('   ⚡ Audio stopped instantly');
-            }
-            
-            // 2. INSTANT: Clear all pending TTS sentences to prevent cascading voices
-            clearAudioQueue();
-            
-            // 3. INSTANT: Update state
-            setIsPlaying(false);
-            
-            // 4. INSTANT: Start recording 
-            if (whisperWsRef.current?.isConnected() && recorderRef.current) {
-              setIsRecording(true);
-              updateStatus('recording');
-              
-              recorderRef.current.start((audioData: Float32Array) => {
-                if (whisperWsRef.current?.isConnected()) {
-                  whisperWsRef.current.sendAudio(audioData.buffer);
-                }
-              });
-              console.log('   ⚡ Recording started instantly');
-            }
-            
-            // 5. BACKGROUND: Server interruption (don't wait for this)
-            if (whisperWsRef.current) {
-              whisperWsRef.current.sendInterruptTts(sessionIdRef.current).then(result => {
-                if (result.success) {
-                  console.log('   ✅ Server interruption completed in background');
-                } else {
-                  console.warn('   ⚠️ Server interruption failed:', result.message);
-                }
-              }).catch(error => {
-                console.error('   ❌ Server interruption error:', error);
-              });
-            }
-            
-            // 6. BACKGROUND: Abort frontend stream (don't wait)
-            if (currentStreamControllerRef.current) {
-              currentStreamControllerRef.current.abort();
-              currentStreamControllerRef.current = null;
-              console.log('   ✅ Frontend stream aborted in background');
-            }
+            // Use the coordinated handleBargeIn function for proper async coordination
+            handleBargeIn();
           }
         });
         

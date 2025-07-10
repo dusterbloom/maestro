@@ -31,6 +31,9 @@ services:
       - MODEL_SIZE=${STT_MODEL:-tiny}
       - VAD_ENABLED=true
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      - KEEPALIVE_TIMEOUT=60
+      - MAX_CONNECTION_TIME=86400  # 24 hours
+      - PING_INTERVAL=15
     deploy:
       resources:
         reservations:
