@@ -69,6 +69,10 @@ services:
       - MAX_CLIENTS=10  # Increased for orchestrator pooling
       - MAX_CONNECTION_TIME=7200  # 2 hours
       - SEND_LAST_N_SEGMENTS=5  # Optimized for real-time
+      # GPU OPTIMIZATION: Keep model loaded in GPU memory
+      - KEEP_MODEL_LOADED=true  # Keep model in GPU VRAM between sessions
+      - PRELOAD_MODEL=true      # Load model to GPU on startup
+      - REUSE_MODEL_INSTANCE=true  # Share GPU model instance
     deploy:
       resources:
         reservations:
