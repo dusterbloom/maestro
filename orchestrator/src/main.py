@@ -49,6 +49,7 @@ class StreamSession:
         self.tts_sequence_number = 0  # Current sequence number for TTS
         self.tts_processing_lock = asyncio.Lock()  # Ensures sequential TTS processing
         self.tts_task: Optional[asyncio.Task] = None  # Task for processing TTS queue
+        self.whisper_message_handler_task: Optional[asyncio.Task] = None # Task for handling whisper messages
         
         # Connection state
         self.whisper_connected = False
@@ -58,6 +59,13 @@ class StreamSession:
         # Metrics
         self.total_requests = 0
         self.last_activity = time.time()
+        self.stt_end_time: Optional[float] = None
+        self.metrics = {
+            "llm_first_token_latency": 0,
+            "llm_total_latency": 0,
+            "tts_latency": 0,
+            "total_pipeline_latency": 0
+        }
         
     def update_activity(self):
         self.last_activity = time.time()
@@ -193,7 +201,7 @@ class VoiceStreamOrchestrator:
                 logger.info(f"✅ Session {session.session_id}: WhisperLive connected and configured")
                 
                 # Start message handler
-                asyncio.create_task(self._handle_whisper_messages(session))
+                session.whisper_message_handler_task = asyncio.create_task(self._handle_whisper_messages(session))
                 
                 return True
                 
@@ -234,6 +242,15 @@ class VoiceStreamOrchestrator:
                 await session.whisper_ws.close(code=1000, reason="Session cleanup")
             except Exception as e:
                 logger.warning(f"Error closing WhisperLive connection: {e}")
+
+        # Cancel any running whisper message handler task
+        if session.whisper_message_handler_task and not session.whisper_message_handler_task.done():
+            logger.info(f"Session {session_id}: Cancelling Whisper message handler task during cleanup")
+            session.whisper_message_handler_task.cancel()
+            try:
+                await session.whisper_message_handler_task
+            except asyncio.CancelledError:
+                pass
                 
         # Signal any ongoing TTS to stop
         session.tts_abort_event.set()
@@ -399,6 +416,7 @@ class VoiceStreamOrchestrator:
                 continue
 
             if self._is_sentence_complete(completed_text):
+                session.stt_end_time = time.time()
                 logger.info(f"Session {session.session_id}: Processing complete sentence: {completed_text}")
                 await self._process_complete_sentence(session, completed_text)
                 
@@ -434,8 +452,10 @@ class VoiceStreamOrchestrator:
             full_response = ""
             sentence_buffer = ""
             
+            llm_start_time = time.time()
+            
             # Start LLM streaming
-            async for token in self._stream_llm_response(text, session.conversation_history):
+            async for token in self._stream_llm_response(session, text, session.conversation_history, llm_start_time):
                 # Check for interruption FIRST before processing any token
                 if session.tts_abort_event.is_set():
                     logger.info(f"🛑 Session {session.session_id}: LLM streaming interrupted")
@@ -542,7 +562,8 @@ class VoiceStreamOrchestrator:
                             if session.tts_abort_event.is_set():
                                 logger.info(f"🛑 Session {session.session_id}: TTS aborted before HTTP request for sequence {sequence}")
                                 break
-                                
+                            
+                            tts_start_time = time.time()
                             # Generate TTS audio with cancellation support
                             response = await client.post(
                                 f"{config.TTS_URL}/v1/audio/speech",
@@ -563,6 +584,11 @@ class VoiceStreamOrchestrator:
                                 break
                                 
                             if response.status_code == 200:
+                                tts_end_time = time.time()
+                                latency = tts_end_time - tts_start_time
+                                logger.info(f"PERF: Session {session.session_id}: TTS generation for sequence {sequence} took {latency:.4f}s")
+                                session.metrics['tts_latency'] += latency
+
                                 audio_data = response.content
                                 
                                 # Final check before sending to frontend
@@ -576,6 +602,11 @@ class VoiceStreamOrchestrator:
                                         "size_bytes": len(audio_data)
                                     })
                                     
+                                    if sequence == 1 and session.stt_end_time:
+                                        total_latency = time.time() - session.stt_end_time
+                                        logger.info(f"PERF: Session {session.session_id}: Total pipeline latency (to first TTS audio): {total_latency:.4f}s")
+                                        session.metrics['total_pipeline_latency'] = total_latency
+
                                     logger.info(f"Session {session.session_id}: Streamed sentence {sequence}")
                                 else:
                                     logger.info(f"🛑 Session {session.session_id}: TTS aborted before streaming sequence {sequence}")
@@ -616,7 +647,7 @@ class VoiceStreamOrchestrator:
         pattern = r'[.!?]\s*$'
         return bool(re.search(pattern, text.strip()))
         
-    async def _stream_llm_response(self, text: str, history: list):
+    async def _stream_llm_response(self, session: StreamSession, text: str, history: list, llm_start_time: float):
         """Stream LLM tokens using ollama"""
         # Build context from history
         context_parts = []
@@ -642,10 +673,22 @@ class VoiceStreamOrchestrator:
                 }
             )
             
+            first_token_received = False
             async for chunk in stream:
+                if not first_token_received:
+                    first_token_time = time.time()
+                    latency = first_token_time - llm_start_time
+                    logger.info(f"PERF: Session {session.session_id}: LLM time to first token: {latency:.4f}s")
+                    session.metrics['llm_first_token_latency'] = latency
+                    first_token_received = True
+
                 if chunk.get('response'):
                     yield chunk['response']
                 if chunk.get('done'):
+                    llm_end_time = time.time()
+                    total_latency = llm_end_time - llm_start_time
+                    logger.info(f"PERF: Session {session.session_id}: LLM total response time: {total_latency:.4f}s")
+                    session.metrics['llm_total_latency'] = total_latency
                     break
                     
         except Exception as e:
@@ -704,32 +747,46 @@ class VoiceStreamOrchestrator:
                 logger.error(f"Failed to send to frontend: {e}")
                 
     async def interrupt_session(self, session_id: str) -> bool:
-        """Interrupt TTS and processing for a session"""
+        """Interrupt TTS and processing for a session without dropping the WhisperLive connection."""
         if session_id not in self.sessions:
             return False
             
         session = self.sessions[session_id]
         
-        # Signal abort to all async operations
+        # 1. Signal abort to all async operations
         session.tts_abort_event.set()
+        
+        # 2. Cancel any running TTS task
+        if session.tts_task and not session.tts_task.done():
+            session.tts_task.cancel()
+            try:
+                await session.tts_task
+            except asyncio.CancelledError:
+                pass # Expected
+
+        # 3. Reset processing state
         session.is_processing = False
         session.tts_active = False
         
-        # Clear the TTS queue to prevent pending sentences from playing
+        # 4. Clear the TTS queue to prevent pending sentences from playing
         session.tts_queue.clear()
         session.tts_sequence_number = 0
         
-        # Forcefully close the connection to WhisperLive to prevent stale transcripts
+        # 5. Send a reset message to WhisperLive to clear its internal buffer
         if session.whisper_ws and self._is_websocket_connected(session.whisper_ws):
-            await session.whisper_ws.close(code=1001, reason="Client interrupt")
-            session.whisper_connected = False
-            logger.info(f"Session {session_id}: Forcefully closed WhisperLive connection due to interrupt.")
+            try:
+                # This message tells WhisperLive to reset the client's audio buffer
+                await session.whisper_ws.send(json.dumps({"uid": session.session_id, "message": "CLIENT_DISCONNECT"}))
+                logger.info(f"Session {session_id}: Sent reset signal to WhisperLive.")
+            except Exception as e:
+                logger.error(f"Session {session_id}: Failed to send reset signal to WhisperLive: {e}")
 
+        # 6. Notify the frontend
         await self._send_to_frontend(session, {
             "type": "interrupted"
         })
         
-        logger.info(f"Session {session_id}: Interrupted and cleared TTS queue")
+        logger.info(f"Session {session_id}: Interrupted TTS and processing. WhisperLive connection remains open.")
         return True
         
     async def _session_cleanup_task(self):
@@ -833,7 +890,8 @@ async def debug_sessions():
                 "is_processing": session.is_processing,
                 "total_requests": session.total_requests,
                 "has_frontend": session.frontend_ws is not None,
-                "has_whisper": session.whisper_ws is not None
+                "has_whisper": session.whisper_ws is not None,
+                "metrics": session.metrics
             }
             for sid, session in orchestrator.sessions.items()
         }
