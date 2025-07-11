@@ -39,3 +39,5 @@ Thumbs.db
 # Roo Code
 .roo/mcp.json
 .claude_code_config.json
+
+path/

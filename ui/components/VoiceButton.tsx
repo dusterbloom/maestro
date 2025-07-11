@@ -1,7 +1,8 @@
+// components/VoiceButton.tsx (Improved Session Management)
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { VoiceWebSocket } from '@/lib/websocket';
+import { VoiceOrchestratorClient, SimpleAudioQueue, SentenceAudioData } from '@/lib/voice-orchestrator-client';
 import { AudioRecorder, AudioPlayer } from '@/lib/audio';
 
 interface VoiceButtonProps {
@@ -14,474 +15,304 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'recording' | 'processing' | 'error'>('idle');
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [connectionAttempts, setConnectionAttempts] = useState(0);
   
-  const whisperWsRef = useRef<VoiceWebSocket | null>(null);
+  // Core service references
+  const orchestratorRef = useRef<VoiceOrchestratorClient | null>(null);
   const recorderRef = useRef<AudioRecorder | null>(null);
   const playerRef = useRef<AudioPlayer | null>(null);
-  const sessionIdRef = useRef<string>(`session_${Date.now()}`);
+  const audioQueueRef = useRef<SimpleAudioQueue | null>(null);
   
-  // TTS interruption control
-  const currentStreamControllerRef = useRef<AbortController | null>(null);
+  // Connection management
+  const initializationRef = useRef<boolean>(false);
+  const cleanupRef = useRef<boolean>(false);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Voice activity detection for barge-in
   const voiceActivityRef = useRef<boolean>(false);
-  const bargeInTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
-  // Audio queue management at component level for interruption access
-  const audioQueueRef = useRef<Array<{sequence: number, audioData: string, text: string}>>([]);
-  const nextToPlayRef = useRef<number>(1);
   
   const updateStatus = useCallback((newStatus: typeof status) => {
+    console.log(`🔄 Status change: ${status} -> ${newStatus}`);
     setStatus(newStatus);
     onStatusChange?.(newStatus);
-  }, [onStatusChange]);
+  }, [status, onStatusChange]);
   
   const handleError = useCallback((error: string) => {
-    console.error('Voice error:', error);
+    console.error('🚨 Voice error:', error);
     updateStatus('error');
     onError?.(error);
   }, [onError, updateStatus]);
   
-  const handleBargeIn = useCallback(async () => {
-    console.log('🛑 Audio Pipeline: USER INTERRUPT - Stopping TTS and starting recording');
+  const handleBargein = useCallback(() => {
+    console.log('🛑 BARGE-IN: User interrupt detected');
     
-    // 1. Send server-side TTS interruption request immediately
-    if (whisperWsRef.current) {
-      try {
-        console.log('   → Sending server TTS interruption request');
-        const result = await whisperWsRef.current.sendInterruptTts(sessionIdRef.current);
-        if (result.success) {
-          console.log('   ✅ Server TTS interruption successful');
-        } else {
-          console.warn('   ⚠️ Server TTS interruption failed:', result.message);
-        }
-      } catch (error) {
-        console.error('   ❌ Server TTS interruption error:', error);
-      }
-    }
-    
-    // 2. Abort any ongoing TTS generation request (frontend control)
-    if (currentStreamControllerRef.current) {
-      console.log('   → Aborting frontend TTS generation request');
-      currentStreamControllerRef.current.abort();
-      currentStreamControllerRef.current = null;
-    }
-    
-    // 3. Stop all audio playback immediately (frontend audio control)
+    // 1. Immediately stop all audio playback (failsafe)
     if (playerRef.current) {
-      console.log('   → Stopping audio playback');
       playerRef.current.stopAll();
     }
     
-    // 4. Update isPlaying state since we interrupted the audio
+    // 2. Clear local audio queue aggressively
+    if (audioQueueRef.current) {
+      audioQueueRef.current.interrupt();
+    }
+    
+    // 3. Interrupt orchestrator (if connected)
+    if (orchestratorRef.current) {
+      try {
+        orchestratorRef.current.interrupt();
+      } catch (e) {
+        console.warn('Failed to send interrupt to orchestrator:', e);
+      }
+    }
+    
+    // 4. Update local state immediately
     setIsPlaying(false);
-    console.log('   → Set isPlaying=false due to interruption');
     
-    // 5. Start recording immediately if not already recording and connected
+    // 5. Start recording if not already (to capture new input)
     if (!isRecording && status === 'connected') {
-      // Use direct recording start to avoid circular dependency
-      if (whisperWsRef.current?.isConnected() && recorderRef.current) {
-        setIsRecording(true);
-        updateStatus('recording');
-        
-        recorderRef.current.start((audioData: Float32Array) => {
-          if (whisperWsRef.current?.isConnected()) {
-            whisperWsRef.current.sendAudio(audioData.buffer);
-          }
-        });
-      }
+      startRecording();
     }
-  }, [isRecording, status, updateStatus]);
+  }, [isRecording, status]);
   
-  const clearAudioQueue = useCallback(() => {
-    console.log(`🧹 Clearing audio queue: ${audioQueueRef.current.length} pending sentences removed`);
-    audioQueueRef.current = [];
-    nextToPlayRef.current = 1;
-  }, []);
-
-  const abortCurrentStream = useCallback(() => {
-    if (currentStreamControllerRef.current) {
-      console.log('Aborting current TTS stream - Audio pipeline control');
-      currentStreamControllerRef.current.abort();
-      currentStreamControllerRef.current = null;
+  // Cleanup function to prevent memory leaks
+  const cleanup = useCallback(async () => {
+    if (cleanupRef.current) return;
+    cleanupRef.current = true;
+    
+    console.log('🧹 Cleaning up VoiceButton resources');
+    
+    // Clear any reconnection timeout
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
     
-    // Also stop any playing audio immediately
-    if (playerRef.current) {
-      playerRef.current.stopAll();
-      setIsPlaying(false);
-    }
-    
-    // Clear pending audio queue
-    clearAudioQueue();
-  }, [clearAudioQueue]);
-  
-  useEffect(() => {
-    let mounted = true;
-    
-    async function initializeServices() {
+    // Stop recording
+    if (recorderRef.current) {
       try {
-        updateStatus('connecting');
+        recorderRef.current.stop();
+        recorderRef.current.cleanup();
+      } catch (e) {
+        console.warn('Error cleaning up recorder:', e);
+      }
+      recorderRef.current = null;
+    }
+    
+    // Stop audio playback
+    if (playerRef.current) {
+      try {
+        playerRef.current.cleanup();
+      } catch (e) {
+        console.warn('Error cleaning up player:', e);
+      }
+      playerRef.current = null;
+    }
+    
+    // Clear audio queue
+    if (audioQueueRef.current) {
+      try {
+        audioQueueRef.current.clear();
+      } catch (e) {
+        console.warn('Error clearing audio queue:', e);
+      }
+      audioQueueRef.current = null;
+    }
+    
+    // Disconnect orchestrator
+    if (orchestratorRef.current) {
+      try {
+        orchestratorRef.current.disconnect();
+      } catch (e) {
+        console.warn('Error disconnecting orchestrator:', e);
+      }
+      orchestratorRef.current = null;
+    }
+    
+    // Reset state
+    setIsRecording(false);
+    setIsPlaying(false);
+    setConnectionAttempts(0);
+    updateStatus('idle');
+    
+    console.log('✅ VoiceButton cleanup complete');
+  }, [updateStatus]);
+  
+  // Initialize services with improved error handling and connection management
+  const initializeServices = useCallback(async (retryCount: number = 0) => {
+    if (initializationRef.current || cleanupRef.current) {
+      console.log('⚠️ Initialization already in progress or cleanup initiated');
+      return;
+    }
+    
+    const maxRetries = 3;
+    const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 10000); // Exponential backoff, max 10s
+    
+    try {
+      initializationRef.current = true;
+      setConnectionAttempts(retryCount + 1);
+      
+      console.log(`🚀 Initializing services (attempt ${retryCount + 1}/${maxRetries})`);
+      updateStatus('connecting');
+      
+      // 1. Initialize audio recorder with error handling
+      console.log('🎤 Initializing audio recorder...');
+      const recorder = new AudioRecorder();
+      const recorderInitialized = await recorder.initialize();
+      
+      if (!recorderInitialized) {
+        throw new Error('Failed to access microphone - check permissions');
+      }
+      
+      // Set up voice activity detection for barge-in
+      recorder.onAudioLevel((level) => {
+        const isVoiceActive = recorder.isVoiceActive();
+        voiceActivityRef.current = isVoiceActive;
         
-        // Initialize direct connection to WhisperLive
-        const whisperWsUrl = process.env.NEXT_PUBLIC_WHISPER_WS_URL || 'ws://localhost:9090';
-        const whisperWs = new VoiceWebSocket(whisperWsUrl);
-        whisperWsRef.current = whisperWs;
+        // More aggressive barge-in detection with multiple triggers
+        const hasPendingAudio = audioQueueRef.current ? audioQueueRef.current.getQueueSize() > 0 : false;
+        const isTTSActive = isPlaying || hasPendingAudio || status === 'processing';
         
-        whisperWs.onConnect(() => {
-          if (mounted) updateStatus('connected');
-        });
-        
-        whisperWs.onError((error) => {
-          if (mounted) handleError(`WhisperLive: ${error}`);
-        });
-        
-        whisperWs.onDisconnect(() => {
-          if (mounted) updateStatus('idle');
-        });
-        
-        whisperWs.onTranscript((transcript) => {
-          if (mounted) {
-            console.log('Received transcript:', transcript);
-            onTranscript?.(transcript);
-          }
-        });
-        
-        whisperWs.onSentence(async (sentence) => {
-          if (mounted) {
-            console.log('Complete sentence received:', sentence);
-            console.log(`🔍 SENTENCE CHECK: isPlaying=${isPlaying}, isRecording=${isRecording}, mounted=${mounted}`);
-            
-            // 🚨 CRITICAL: Completely block new TTS requests while audio is playing
-            if (isPlaying) {
-              console.log('🚨 BLOCKING NEW TTS: Audio is currently playing - ignoring sentence to prevent cascading voices');
-              return; // Do NOT process new sentences while TTS is playing
-            }
-            
-            // Only process if no audio is currently playing
-            console.log(`📝 Processing sentence (audio not playing): ${sentence}`);
-            
-            // Abort any ongoing TTS stream before starting new one (audio pipeline control)
-            console.log('🎯 Audio Pipeline: NEW REQUEST - Interrupting any current audio');
-            abortCurrentStream();
-            
-            // Send complete sentence to orchestrator for REAL-TIME streaming
-            try {
-              updateStatus('processing');
-              
-              // Create new AbortController for this stream
-              const streamController = new AbortController();
-              currentStreamControllerRef.current = streamController;
-              
-              console.log('🚀 REAL-TIME STREAMING: Using streaming endpoint for instant audio playback');
-              
-              const response = await fetch('/api/process-transcript', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'X-Use-Streaming': 'true'  // Enable real-time streaming
-                },
-                body: JSON.stringify({
-                  transcript: sentence,
-                  session_id: sessionIdRef.current
-                }),
-                signal: streamController.signal  // Add abort signal
-              });
-              
-              if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-              }
-              
-              // Handle Server-Sent Events with sentence-level audio streaming
-              if (!response.body) {
-                throw new Error('No response stream available');
-              }
-              
-              const eventSource = new ReadableStream({
-                start(controller) {
-                  const reader = response.body!.getReader();
-                  
-                  function pump(): Promise<void> {
-                    return reader.read().then(({ done, value }) => {
-                      if (done) {
-                        controller.close();
-                        return;
-                      }
-                      controller.enqueue(value);
-                      return pump();
-                    }).catch(error => {
-                      controller.error(error);
-                    });
-                  }
-                  
-                  return pump();
-                }
-              });
-              
-              const reader = eventSource.getReader();
-              const decoder = new TextDecoder();
-              let buffer = '';
-              let sentenceCount = 0;
-              // Use component-level queue refs for interruption access
-              audioQueueRef.current = []; // Reset queue for new stream
-              nextToPlayRef.current = 1;
-              
-              const playNextInQueue = async () => {
-                if (isPlaying) return;
-                
-                // Find the next sentence to play
-                const nextItem = audioQueueRef.current.find(item => item.sequence === nextToPlayRef.current);
-                if (!nextItem) return;
-                
-                setIsPlaying(true);  // ✅ FIX: Use React state setter, not local variable
-                console.log(`🎵 Playing sentence ${nextItem.sequence}: ${nextItem.text.slice(0, 30)}...`);
-                
-                try {
-                  // Decode base64 audio data
-                  const audioBytes = Uint8Array.from(atob(nextItem.audioData), c => c.charCodeAt(0));
-                  
-                  if (playerRef.current) {
-                    await playerRef.current.play(audioBytes.buffer);
-                    console.log(`✅ Sentence ${nextItem.sequence} played successfully!`);
-                  }
-                  
-                  // Remove played item and move to next
-                  const index = audioQueueRef.current.findIndex(item => item.sequence === nextToPlayRef.current);
-                  if (index >= 0) {
-                    audioQueueRef.current.splice(index, 1);
-                  }
-                  nextToPlayRef.current++;
-                  
-                  // Check if more sentences are queued, only set isPlaying=false when done
-                  if (audioQueueRef.current.length === 0) {
-                    setIsPlaying(false);  // ✅ Only stop when queue is empty
-                    console.log('🎵 All audio sentences completed, setting isPlaying=false');
-                  }
-                  
-                  // Play next item if available
-                  setTimeout(() => playNextInQueue(), 50); // Small delay between sentences
-                  
-                } catch (audioError) {
-                  console.error(`❌ Failed to play sentence ${nextItem.sequence}:`, audioError);
-                  
-                  // Remove failed item and check if queue is empty
-                  const index = audioQueueRef.current.findIndex(item => item.sequence === nextToPlayRef.current);
-                  if (index >= 0) {
-                    audioQueueRef.current.splice(index, 1);
-                  }
-                  nextToPlayRef.current++;
-                  
-                  if (audioQueueRef.current.length === 0) {
-                    setIsPlaying(false);
-                    console.log('🎵 Audio queue empty after error, setting isPlaying=false');
-                  }
-                  
-                  setTimeout(() => playNextInQueue(), 50);
-                }
-              };
-              
-              while (true) {
-                const { done, value } = await reader.read();
-                
-                if (done) {
-                  console.log('🎉 Real-time streaming complete!');
-                  break;
-                }
-                
-                // Check if stream was aborted
-                if (streamController.signal.aborted) {
-                  console.log('🛑 Stream aborted by user');
-                  reader.cancel();
-                  break;
-                }
-                
-                if (value) {
-                  buffer += decoder.decode(value, { stream: true });
-                  
-                  // Process complete lines
-                  const lines = buffer.split('\n');
-                  buffer = lines.pop() || ''; // Keep incomplete line
-                  
-                  for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                      try {
-                        const data = JSON.parse(line.slice(6));
-                        
-                        if (data.type === 'sentence_audio') {
-                          sentenceCount++;
-                          console.log(`📝 Received sentence ${data.sequence}: ${data.text.slice(0, 30)}...`);
-                          
-                          // Add to audio queue
-                          audioQueueRef.current.push({
-                            sequence: data.sequence,
-                            audioData: data.audio_data,
-                            text: data.text
-                          });
-                          
-                          // Start playing if this is the next expected sentence
-                          if (data.sequence === nextToPlayRef.current) {
-                            playNextInQueue();
-                          }
-                          
-                        } else if (data.type === 'complete') {
-                          console.log(`🎉 All ${data.total_sentences} sentences received!`);
-                          console.log(`📄 Complete response: ${data.full_text?.slice(0, 100)}...`);
-                        } else if (data.type === 'error') {
-                          console.error('❌ Streaming error:', data.message);
-                        }
-                      } catch (e) {
-                        console.error('Failed to parse streaming data:', e);
-                      }
-                    }
-                  }
-                }
-              }
-              
-              updateStatus('connected');
-              // Clear the controller reference
-              if (currentStreamControllerRef.current === streamController) {
-                currentStreamControllerRef.current = null;
-              }
-              
-            } catch (error: any) {
-              // Don't treat abort as error
-              if (error.name === 'AbortError') {
-                console.log('TTS request aborted due to barge-in');
-                updateStatus('connected');
-              } else {
-                handleError('Failed to process sentence');
-              }
-            }
-          }
-        });
-        
-        whisperWs.connect(sessionIdRef.current);
-        
-        // Initialize audio recorder
-        const recorder = new AudioRecorder();
-        const initialized = await recorder.initialize();
-        
-        if (!initialized) {
-          throw new Error('Failed to access microphone');
+        // Trigger barge-in immediately when voice is detected during TTS
+        if (isVoiceActive && isTTSActive && !isRecording) {
+          console.log('🚨 BARGE-IN TRIGGERED: Interrupting TTS');
+          handleBargein();
         }
         
-        // Set up voice activity detection for IMMEDIATE barge-in (< 100ms)
-        recorder.onAudioLevel((level) => {
-          const isVoiceActive = recorder.isVoiceActive();
-          voiceActivityRef.current = isVoiceActive;
+        // Additional hair-trigger interruption on any significant audio level
+        if (level > 0.08 && (isPlaying || status === 'processing') && !isRecording) {
+          console.log('🚨 VOICE DETECTED: Quick interrupt on audio level', level);
+          handleBargein();
+        }
+      });
+      
+      recorderRef.current = recorder;
+      console.log('✅ Audio recorder initialized');
+      
+      // 2. Initialize audio player
+      console.log('🔊 Initializing audio player...');
+      const player = new AudioPlayer();
+      playerRef.current = player;
+      console.log('✅ Audio player initialized');
+      
+      // 3. Initialize audio queue
+      const audioQueue = new SimpleAudioQueue(player);
+      audioQueueRef.current = audioQueue;
+      console.log('✅ Audio queue initialized');
+      
+      // 4. Initialize orchestrator client with stable session ID
+      console.log('🎭 Initializing orchestrator client...');
+      const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const orchestrator = new VoiceOrchestratorClient(sessionId);
+      orchestratorRef.current = orchestrator;
+      
+      // Set up orchestrator event handlers
+      orchestrator.onReady(() => {
+        if (!cleanupRef.current) {
+          console.log('🎯 Orchestrator ready');
+          updateStatus('connected');
+          setConnectionAttempts(0); // Reset retry counter on success
+          initializationRef.current = false;
+        }
+      });
+      
+      orchestrator.onError((error) => {
+        if (!cleanupRef.current) {
+          console.error('🚨 Orchestrator error:', error);
+          handleError(`Connection: ${error}`);
+          initializationRef.current = false;
           
-          // 🔍 DEBUG: Log voice activity levels to diagnose detection issues
-          if (level > 0.001) { // Only log when there's some audio
-            console.log(`🎤 VOICE DEBUG: level=${level.toFixed(4)}, active=${isVoiceActive}, isPlaying=${isPlaying}, isRecording=${isRecording}, threshold=${recorder.getVoiceActivityThreshold()}`);
+          // Attempt retry if under max attempts
+          if (retryCount < maxRetries - 1) {
+            console.log(`🔄 Retrying connection in ${retryDelay}ms...`);
+            reconnectTimeoutRef.current = setTimeout(() => {
+              initializeServices(retryCount + 1);
+            }, retryDelay);
+          } else {
+            console.error('❌ Max connection attempts reached');
           }
+        }
+      });
+      
+      orchestrator.onDisconnect(() => {
+        if (!cleanupRef.current) {
+          console.log('🔌 Orchestrator disconnected');
+          updateStatus('idle');
+          initializationRef.current = false;
           
-          // 🚨 IMMEDIATE INTERRUPTION: If user speaks while TTS is playing OR queued
-          const hasPendingAudio = audioQueueRef.current.length > 0;
-          if (isVoiceActive && (isPlaying || hasPendingAudio) && !isRecording) {
-            console.log('🚨 IMMEDIATE BARGE-IN: Voice detected while TTS playing/queued - INSTANT STOP');
-            console.log(`   → isPlaying=${isPlaying}, pendingAudio=${hasPendingAudio}, queueSize=${audioQueueRef.current.length}`);
-            
-            // 1. INSTANT: Stop all audio playback
-            if (playerRef.current) {
-              playerRef.current.stopAll();
-              console.log('   ⚡ Audio stopped instantly');
-            }
-            
-            // 2. INSTANT: Clear all pending TTS sentences to prevent cascading voices
-            clearAudioQueue();
-            
-            // 3. INSTANT: Update state
-            setIsPlaying(false);
-            
-            // 4. INSTANT: Start recording 
-            if (whisperWsRef.current?.isConnected() && recorderRef.current) {
-              setIsRecording(true);
-              updateStatus('recording');
-              
-              recorderRef.current.start((audioData: Float32Array) => {
-                if (whisperWsRef.current?.isConnected()) {
-                  whisperWsRef.current.sendAudio(audioData.buffer);
-                }
-              });
-              console.log('   ⚡ Recording started instantly');
-            }
-            
-            // 5. BACKGROUND: Server interruption (don't wait for this)
-            if (whisperWsRef.current) {
-              whisperWsRef.current.sendInterruptTts(sessionIdRef.current).then(result => {
-                if (result.success) {
-                  console.log('   ✅ Server interruption completed in background');
-                } else {
-                  console.warn('   ⚠️ Server interruption failed:', result.message);
-                }
-              }).catch(error => {
-                console.error('   ❌ Server interruption error:', error);
-              });
-            }
-            
-            // 6. BACKGROUND: Abort frontend stream (don't wait)
-            if (currentStreamControllerRef.current) {
-              currentStreamControllerRef.current.abort();
-              currentStreamControllerRef.current = null;
-              console.log('   ✅ Frontend stream aborted in background');
-            }
+          // Attempt reconnection if not at max retries
+          if (retryCount < maxRetries - 1) {
+            console.log(`🔄 Attempting reconnection in ${retryDelay}ms...`);
+            reconnectTimeoutRef.current = setTimeout(() => {
+              initializeServices(retryCount + 1);
+            }, retryDelay);
           }
-        });
-        
-        recorderRef.current = recorder;
-        
-        // Initialize audio player
-        const player = new AudioPlayer();
-        
-        // Set up playback state tracking
-        player.onPlaybackStart(() => {
-          console.log('TTS playback started');
-          setIsPlaying(true);
-        });
-        
-        player.onPlaybackEnd(() => {
-          console.log('TTS playback ended');
-          setIsPlaying(false);
-        });
-        
-        playerRef.current = player;
-        
-      } catch (error) {
-        if (mounted) {
-          handleError(error instanceof Error ? error.message : 'Initialization failed');
+        }
+      });
+      
+      orchestrator.onLiveTranscript((transcript) => {
+        if (!cleanupRef.current) {
+          console.log('📝 Live transcript:', transcript);
+          onTranscript?.(transcript);
+        }
+      });
+      
+      orchestrator.onProcessing((isProcessing) => {
+        if (!cleanupRef.current) {
+          if (isProcessing) {
+            updateStatus('processing');
+          } else if (status === 'processing') {
+            updateStatus('connected');
+          }
+        }
+      });
+      
+      orchestrator.onSentenceAudio((data: SentenceAudioData) => {
+        if (!cleanupRef.current && audioQueueRef.current) {
+          console.log(`🎵 Received sentence audio ${data.sequence}`);
+          audioQueueRef.current.addSentence(data);
+          
+          // Update playing status
+          if (!isPlaying) {
+            setIsPlaying(true);
+          }
+        }
+      });
+      
+      // Connect to orchestrator
+      console.log('🔌 Connecting to orchestrator...');
+      orchestrator.connect();
+      
+    } catch (error) {
+      console.error(`❌ Initialization failed (attempt ${retryCount + 1}):`, error);
+      initializationRef.current = false;
+      
+      if (!cleanupRef.current) {
+        if (retryCount < maxRetries - 1) {
+          console.log(`🔄 Retrying initialization in ${retryDelay}ms...`);
+          reconnectTimeoutRef.current = setTimeout(() => {
+            initializeServices(retryCount + 1);
+          }, retryDelay);
+        } else {
+          handleError(error instanceof Error ? error.message : 'Initialization failed after multiple attempts');
         }
       }
     }
-    
+  }, [updateStatus, handleError, handleBargein, isPlaying, status, isRecording, onTranscript]);
+  
+  // Initialize on mount, cleanup on unmount
+  useEffect(() => {
+    console.log('🎬 VoiceButton component mounting');
+    cleanupRef.current = false;
     initializeServices();
     
     return () => {
-      mounted = false;
-      
-      // Clean up TTS stream
-      if (currentStreamControllerRef.current) {
-        currentStreamControllerRef.current.abort();
-        currentStreamControllerRef.current = null;
-      }
-      
-      // Clean up timeouts
-      if (bargeInTimeoutRef.current) {
-        clearTimeout(bargeInTimeoutRef.current);
-        bargeInTimeoutRef.current = null;
-      }
-      
-      if (whisperWsRef.current) {
-        whisperWsRef.current.disconnect();
-      }
-      if (recorderRef.current) {
-        recorderRef.current.cleanup();
-      }
-      if (playerRef.current) {
-        playerRef.current.cleanup();
-      }
+      console.log('🎬 VoiceButton component unmounting');
+      cleanup();
     };
-  }, []); // Remove unstable dependencies that cause re-connections
+  }, []); // Empty dependency array - only run once
   
   const startRecording = useCallback(async () => {
-    if (!whisperWsRef.current?.isConnected() || !recorderRef.current) {
+    if (!orchestratorRef.current?.isConnected() || !recorderRef.current) {
       handleError('Services not ready');
       return;
     }
@@ -490,36 +321,44 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
       setIsRecording(true);
       updateStatus('recording');
       
-      // Start recording with real-time audio streaming to WhisperLive
+      console.log('🎤 Starting recording...');
+      
+      // Start recording with real-time audio streaming
       recorderRef.current.start((audioData: Float32Array) => {
-        if (whisperWsRef.current?.isConnected()) {
-          // Send resampled audio data directly to WhisperLive
-          whisperWsRef.current.sendAudio(audioData.buffer);
+        if (orchestratorRef.current?.isConnected()) {
+          orchestratorRef.current.sendAudio(audioData.buffer);
         }
       });
+      
+      console.log('🎤 Recording started successfully');
+      
     } catch (error) {
+      console.error('❌ Failed to start recording:', error);
       handleError('Failed to start recording');
       setIsRecording(false);
     }
   }, [handleError, updateStatus]);
   
   const stopRecording = useCallback(async () => {
-    if (!isRecording || !recorderRef.current || !whisperWsRef.current) {
+    if (!isRecording || !recorderRef.current || !orchestratorRef.current) {
       return;
     }
     
     try {
+      console.log('🛑 Stopping recording...');
       setIsRecording(false);
-      // Keep status as recording until we get transcript
       
       // Stop recording
       recorderRef.current.stop();
       
-      // Send end of audio signal to WhisperLive
-      whisperWsRef.current.sendEndOfAudio();
+      // Send end of audio signal
+      orchestratorRef.current.sendEndOfAudio();
+      
+      console.log('🛑 Recording stopped successfully');
       
     } catch (error) {
-      handleError('Failed to process recording');
+      console.error('❌ Failed to stop recording:', error);
+      handleError('Failed to stop recording');
     }
   }, [isRecording, handleError]);
   
@@ -530,15 +369,25 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
       } else {
         startRecording();
       }
+    } else if (status === 'error') {
+      // Retry connection on error
+      console.log('🔄 Retrying connection...');
+      cleanup().then(() => {
+        setTimeout(() => {
+          cleanupRef.current = false;
+          initializeServices();
+        }, 1000);
+      });
     }
-  }, [status, isRecording, startRecording, stopRecording]);
+  }, [status, isRecording, startRecording, stopRecording, cleanup, initializeServices]);
   
+  // UI helpers
   const getButtonText = () => {
     switch (status) {
       case 'idle':
-        return 'Connecting...';
+        return 'Initializing...';
       case 'connecting':
-        return 'Connecting...';
+        return connectionAttempts > 1 ? `Retrying... (${connectionAttempts}/3)` : 'Connecting...';
       case 'connected':
         return isRecording ? 'Stop Recording' : 'Start Recording';
       case 'recording':
@@ -546,7 +395,7 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
       case 'processing':
         return 'Processing...';
       case 'error':
-        return 'Error - Retry';
+        return 'Error - Tap to Retry';
       default:
         return 'Start Recording';
     }
@@ -558,30 +407,68 @@ export default function VoiceButton({ onStatusChange, onTranscript, onError }: V
     switch (status) {
       case 'idle':
       case 'connecting':
-        return `${baseClasses} bg-gray-400 text-white cursor-not-allowed opacity-70`;
+        return `${baseClasses} bg-gray-400 text-white cursor-not-allowed opacity-70 ${
+          status === 'connecting' ? 'animate-pulse' : ''
+        }`;
       case 'connected':
-        return `${baseClasses} bg-blue-500 hover:bg-blue-600 text-white cursor-pointer ${isRecording ? 'scale-110 bg-red-500 hover:bg-red-600' : ''}`;
+        return `${baseClasses} bg-blue-500 hover:bg-blue-600 text-white cursor-pointer ${
+          isRecording ? 'scale-110 bg-red-500 hover:bg-red-600' : ''
+        }`;
       case 'recording':
-        return `${baseClasses} bg-red-500 scale-110 text-white cursor-pointer`;
+        return `${baseClasses} bg-red-500 scale-110 text-white cursor-pointer animate-pulse`;
       case 'processing':
         return `${baseClasses} bg-yellow-500 text-white cursor-not-allowed animate-pulse`;
       case 'error':
-        return `${baseClasses} bg-red-600 hover:bg-red-700 text-white cursor-pointer`;
+        return `${baseClasses} bg-red-600 hover:bg-red-700 text-white cursor-pointer animate-bounce`;
       default:
         return `${baseClasses} bg-gray-400 text-white cursor-not-allowed`;
     }
   };
   
-  const isDisabled = status !== 'connected' && status !== 'recording';
+  const isDisabled = status !== 'connected' && status !== 'recording' && status !== 'error';
   
   return (
-    <button
-      onClick={handleToggleRecording}
-      disabled={isDisabled}
-      className={getButtonStyle()}
-      aria-label={getButtonText()}
-    >
-      {getButtonText()}
-    </button>
+    <div className="relative">
+      <button
+        onClick={handleToggleRecording}
+        disabled={isDisabled}
+        className={getButtonStyle()}
+        aria-label={getButtonText()}
+      >
+        {getButtonText()}
+      </button>
+      
+      {/* Interrupt button when audio is playing */}
+      {(isPlaying || status === 'processing') && (
+        <button
+          onClick={handleBargein}
+          className="absolute -right-16 top-1/2 transform -translate-y-1/2 bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded-full text-sm font-medium transition-colors"
+          aria-label="Stop & Interrupt"
+          title="Stop audio and start speaking"
+        >
+          🛑 Stop
+        </button>
+      )}
+      
+      {/* Status indicators */}
+      <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 text-xs text-gray-600">
+        {isPlaying && (
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            <span>Playing</span>
+          </div>
+        )}
+        {audioQueueRef.current && audioQueueRef.current.getQueueSize() > 0 && (
+          <div className="text-blue-600">
+            Queue: {audioQueueRef.current.getQueueSize()}
+          </div>
+        )}
+        {connectionAttempts > 0 && status === 'connecting' && (
+          <div className="text-orange-600 text-xs">
+            Attempt {connectionAttempts}/3
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
