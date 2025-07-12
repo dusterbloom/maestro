@@ -218,7 +218,7 @@ class WhisperLiveProcessor(processor.Processor):
                         break
                 
                 # Extract audio data from ProcessorPart
-                if part.mime_type and part.mime_type.startswith("audio/"):
+                if part.mimetype and part.mimetype.startswith("audio/"):
                     audio_data = self._extract_audio_data(part)
                     if audio_data:
                         await self._send_audio_to_whisper(audio_data)
@@ -320,8 +320,8 @@ class WhisperLiveProcessor(processor.Processor):
                         
                         # Create ProcessorPart with rich metadata
                         transcript_part = content_api.ProcessorPart(
-                            content=text,
-                            mime_type="text/plain",
+                            text,
+                            mimetype="text/plain",
                             metadata={
                                 "session_id": self.session_id,
                                 "content_type": VoiceMetadata.TRANSCRIPT,
@@ -353,8 +353,8 @@ class WhisperLiveProcessor(processor.Processor):
                         
                         # Create live transcript ProcessorPart
                         live_part = content_api.ProcessorPart(
-                            content=text,
-                            mime_type="text/plain",
+                            text,
+                            mimetype="text/plain",
                             metadata={
                                 "session_id": self.session_id,
                                 "content_type": "live_transcript",

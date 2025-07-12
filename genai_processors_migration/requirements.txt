@@ -1,0 +1,29 @@
+# genai_processors_migration/requirements.txt
+
+# --- Core Application Framework ---
+fastapi
+uvicorn[standard]
+ollama
+
+# --- GenAI Processors Framework ---
+genai-processors
+
+# --- Supporting Libraries ---
+httpx
+requests
+websockets
+python-multipart
+numpy
+pydantic
+python-json-logger
+
+# --- Audio Processing ---
+# Add any audio processing libraries that genai-processors might need
+librosa
+soundfile
+pyaudio
+
+# --- Additional dependencies that might be needed ---
+asyncio-mqtt
+redis
+aiofiles

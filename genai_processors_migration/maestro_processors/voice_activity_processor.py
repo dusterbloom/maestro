@@ -136,8 +136,8 @@ class VoiceActivityProcessor(processor.Processor):
     
     def _is_audio_part(self, part: content_api.ProcessorPart) -> bool:
         """Check if ProcessorPart contains audio input data."""
-        return (part.mime_type and 
-                part.mime_type.startswith("audio/") and
+        return (part.mimetype and 
+                part.mimetype.startswith("audio/") and
                 part.metadata and
                 part.metadata.get("content_type") == VoiceMetadata.AUDIO_INPUT)
     

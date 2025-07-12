@@ -1,0 +1,44 @@
+# CPU-only override optimized for Apple Silicon (build locally)
+services:
+  # Build OVOS STT locally for native ARM64 performance
+  whisper-live:
+    build:
+      context: .
+      dockerfile: Dockerfile.ovos-stt-arm64
+      platforms:
+        - linux/arm64
+    ports:
+      - "9090:8080"
+    environment:
+      - CUDA_VISIBLE_DEVICES=""
+      - STT_MODEL=${STT_MODEL:-tiny}
+      - STT_COMPUTE_TYPE=int8
+      - STT_USE_CUDA=false
+      - STT_CPU_THREADS=8  # Optimize for M4's performance cores
+    deploy:
+      resources:
+        reservations:
+          devices: []  # No GPU devices
+    volumes:
+      - ./data/models/ovos-stt:/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - voice-net
+
+  # Use CPU-only TTS
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    deploy:
+      resources:
+        reservations:
+          devices: []  # No GPU devices
+
+  # Update orchestrator environment
+  orchestrator:
+    environment:
+      - WHISPER_URL=${WHISPER_URL:-http://whisper-live:8080}

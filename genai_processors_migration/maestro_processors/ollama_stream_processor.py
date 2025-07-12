@@ -224,16 +224,8 @@ class OllamaStreamProcessor(processor.Processor):
             
             # Yield error response part
             error_part = content_api.ProcessorPart(
-                content="I'm sorry, I couldn't process your request right now.",
-                mime_type="text/plain",
-                metadata={
-                    "session_id": self.session_id,
-                    "content_type": VoiceMetadata.LLM_TEXT,
-                    "stage": VoiceMetadata.STAGE_LLM,
-                    "status": VoiceMetadata.STATUS_ERROR,
-                    "timestamp": time.time(),
-                    "error": str(e)
-                }
+                "I'm sorry, I couldn't process your request right now.",
+
             )
             yield error_part
     
@@ -315,8 +307,8 @@ class OllamaStreamProcessor(processor.Processor):
         }
         
         return content_api.ProcessorPart(
-            content=sentence,
-            mime_type="text/plain",
+            sentence,
+            mimetype="text/plain",
             metadata=metadata
         )
     

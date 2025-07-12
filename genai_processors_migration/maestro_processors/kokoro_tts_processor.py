@@ -293,8 +293,8 @@ class KokoroTTSProcessor(processor.Processor):
                 
                 # Create audio ProcessorPart with rich metadata
                 audio_part = content_api.ProcessorPart(
-                    content=audio_data,
-                    mime_type="audio/wav",
+                    audio_data,
+                    mimetype="audio/wav",
                     metadata={
                         "session_id": self.session_id,
                         "content_type": VoiceMetadata.TTS_AUDIO,

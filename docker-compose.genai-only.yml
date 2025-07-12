@@ -1,0 +1,157 @@
+# docker-compose.genai-only.yml - Test only the GenAI Processors implementation
+# Run with: docker-compose -f docker-compose.genai-only.yml up
+
+services:
+  # GenAI Processors Orchestrator - Testing standalone
+  orchestrator-genai:
+    build:
+      context: ./genai_processors_migration
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"  # Standard port for testing
+    environment:
+      # Service URLs
+      - WHISPER_URL=${WHISPER_URL:-http://whisper-live:9090}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - TTS_URL=${TTS_URL:-http://kokoro:8880}
+      - MEMORY_ENABLED=${MEMORY_ENABLED:-false}
+      - AMEM_URL=${AMEM_URL:-http://a-mem:8001}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      
+      # Model Configuration
+      - STT_MODEL=${STT_MODEL:-tiny}
+      - LLM_MODEL=${LLM_MODEL:-gemma3n:latest}
+      - TTS_VOICE=${TTS_VOICE:-af_bella}
+      
+      # Processing Parameters
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-512}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
+      - TTS_SPEED=${TTS_SPEED:-1.0}
+      - TTS_VOLUME=${TTS_VOLUME:-1.0}
+      
+      # Audio Processing
+      - CHUNK_SIZE=${CHUNK_SIZE:-256}
+      - MIN_WORD_COUNT=${MIN_WORD_COUNT:-3}
+      
+      # WhisperLive Settings
+      - NO_SPEECH_THRESHOLD=${NO_SPEECH_THRESHOLD:-0.45}
+      - VAD_ENABLED=${VAD_ENABLED:-true}
+      
+      # Timeouts
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-30.0}
+      - TTS_TIMEOUT=${TTS_TIMEOUT:-10.0}
+      - AMEM_TIMEOUT=${AMEM_TIMEOUT:-5.0}
+      
+      # GenAI Processors Specific Settings
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_PROJECT_ID=${GOOGLE_PROJECT_ID:-}
+      - PROCESSOR_CONCURRENCY=${PROCESSOR_CONCURRENCY:-4}
+      - ENABLE_VAD_MONITORING=${ENABLE_VAD_MONITORING:-true}
+      - TARGET_LATENCY_MS=${TARGET_LATENCY_MS:-450}
+      - DEVELOPMENT_MODE=${DEVELOPMENT_MODE:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      
+    depends_on:
+      - whisper-live
+      - kokoro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - voice-net
+
+  # WhisperLive - Speech-to-Text Service
+  whisper-live:
+    build:
+      context: https://github.com/collabora/WhisperLive.git
+      dockerfile: docker/Dockerfile.gpu
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./data/models/whisper:/models
+    environment:
+      - MODEL_SIZE=${STT_MODEL:-tiny}
+      - VAD_ENABLED=${VAD_ENABLED:-true}
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      - MAX_CLIENTS=10
+      - MAX_CONNECTION_TIME=7200
+      - SEND_LAST_N_SEGMENTS=5
+      - KEEP_MODEL_LOADED=true
+      - PRELOAD_MODEL=true
+      - REUSE_MODEL_INSTANCE=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - voice-net
+
+  # Kokoro TTS - Text-to-Speech Service
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:v0.2.1
+    ports:
+      - "8880:8880"
+    environment:
+      - DEFAULT_VOICE=${TTS_VOICE:-af_bella}
+      - MAX_CONCURRENT_REQUESTS=20
+      - ENABLE_STREAMING=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8880/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - voice-net
+
+  # Frontend UI for GenAI Orchestrator
+  voice-ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - NEXT_PUBLIC_ORCHESTRATOR_WS_URL=${NEXT_PUBLIC_ORCHESTRATOR_WS_URL:-ws://localhost:8000}
+      - ORCHESTRATOR_HTTP_URL=${ORCHESTRATOR_HTTP_URL:-http://orchestrator-genai:8000}
+      - NODE_ENV=${NODE_ENV:-production}
+    depends_on:
+      - orchestrator-genai
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - voice-net
+
+# Network configuration
+networks:
+  voice-net:
+    name: voice-genai-test-net
+    driver: bridge
+
+# Volumes for persistent data
+volumes:
+  whisper-models:
+    driver: local
