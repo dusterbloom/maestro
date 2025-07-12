@@ -1,17 +1,42 @@
-# CPU-only override for systems without GPU support
+# CPU-only override for systems without GPU support (including Apple Silicon Macs)
 services:
+  # Option 1: Try existing OVOS image (may be x86, slower via emulation)
   whisper-live:
-    image: ohorstmann/whisperlive:latest
+    image: smartgic/ovos-stt-server-fasterwhisper:latest
+    platform: linux/amd64  # Explicitly use x86 version if no ARM64 available
+    ports:
+      - "9090:8080"  # Map to port 8080 inside container (OVOS STT default)
     environment:
       - CUDA_VISIBLE_DEVICES=""
+      # Optimized for CPU performance
+      - STT_MODEL=${STT_MODEL:-tiny}
+      - STT_COMPUTE_TYPE=int8
+      - STT_USE_CUDA=false
+      - STT_CPU_THREADS=4  # Conservative for emulation
     deploy:
       resources:
         reservations:
-          devices: []
+          devices: []  # No GPU devices
+    volumes:
+      - ./data/models/ovos-stt:/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - voice-net
 
+  # Use CPU-only TTS (already in original file)
   kokoro:
     image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
     deploy:
       resources:
         reservations:
-          devices: []
+          devices: []  # No GPU devices
+
+  # Update orchestrator environment to ensure compatibility
+  orchestrator:
+    environment:
+      - WHISPER_URL=${WHISPER_URL:-http://whisper-live:8080}  # Updated port for OVOS STT
