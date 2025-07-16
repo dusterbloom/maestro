@@ -4,7 +4,7 @@ import logging
 import os
 import time
 import base64
-from typing import Dict, Set, Optional, Any
+from typing import Dict, Set, Optional, Any, Callable
 from urllib.parse import urlparse
 import websockets
 import websockets.exceptions
@@ -18,6 +18,61 @@ from config import config
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+class PipelineEventBus:
+    """
+    Fire-and-forget event bus for ultra-fast pipeline processing
+    """
+    def __init__(self):
+        self._listeners: Dict[str, list[Callable]] = {}
+        self._logger = logging.getLogger(__name__ + ".PipelineEventBus")
+        
+    def on(self, event_type: str, callback: Callable):
+        """Register an event listener"""
+        if event_type not in self._listeners:
+            self._listeners[event_type] = []
+        self._listeners[event_type].append(callback)
+        
+    def off(self, event_type: str, callback: Callable):
+        """Remove an event listener"""
+        if event_type in self._listeners:
+            try:
+                self._listeners[event_type].remove(callback)
+            except ValueError:
+                pass
+                
+    async def emit(self, event_type: str, data: Any = None):
+        """Fire-and-forget event emission"""
+        if event_type not in self._listeners:
+            return
+            
+        # Create tasks for all listeners without waiting
+        tasks = []
+        for callback in self._listeners[event_type]:
+            try:
+                if asyncio.iscoroutinefunction(callback):
+                    task = asyncio.create_task(callback(data))
+                else:
+                    # Handle sync callbacks
+                    task = asyncio.create_task(asyncio.to_thread(callback, data))
+                tasks.append(task)
+            except Exception as e:
+                self._logger.error(f"Error creating task for event {event_type}: {e}")
+                
+        # Fire and forget - don't wait for completion
+        if tasks:
+            # Log completion but don't wait
+            asyncio.create_task(self._log_completion(event_type, tasks))
+            
+    async def _log_completion(self, event_type: str, tasks: list):
+        """Log completion of event processing without blocking"""
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            errors = [r for r in results if isinstance(r, Exception)]
+            if errors:
+                self._logger.warning(f"Event {event_type}: {len(errors)}/{len(tasks)} listeners failed")
+        except Exception as e:
+            self._logger.error(f"Error in event completion logging: {e}")
 
 app = FastAPI(title="Voice Stream Orchestrator", version="2.0.0")
 
@@ -51,6 +106,9 @@ class StreamSession:
         self.tts_task: Optional[asyncio.Task] = None  # Task for processing TTS queue
         self.whisper_message_handler_task: Optional[asyncio.Task] = None # Task for handling whisper messages
         
+        # Event bus for ultra-fast processing
+        self.event_bus = PipelineEventBus()
+        
         # Connection state
         self.whisper_connected = False
         self.connection_retries = 0
@@ -73,15 +131,32 @@ class StreamSession:
     def can_be_cleaned_up(self, max_idle_time: int = 3600) -> bool:
         return (time.time() - self.last_activity) > max_idle_time
 
+    async def process_ultra_fast(self, text: str) -> None:
+        """Ultra-fast processing using event bus for fire-and-forget execution"""
+        try:
+            # Emit event for immediate processing without waiting
+            await self.event_bus.emit("ultra_fast_process", {
+                "session_id": self.session_id,
+                "text": text,
+                "timestamp": time.time()
+            })
+        except Exception as e:
+            logger.error(f"Error in ultra-fast processing for session {self.session_id}: {e}")
+
 class VoiceStreamOrchestrator:
     """
     Central coordinator for all voice processing streams
     """
     def __init__(self):
         self.sessions: Dict[str, StreamSession] = {}
+        self.event_bus = PipelineEventBus()
+        
         # Robust URL parsing for WhisperLive
         logger.info(f"Parsing WHISPER_URL: '{config.WHISPER_URL}'")
         logger.info(f"Raw WHISPER_URL env var: '{os.getenv('WHISPER_URL', 'NOT_SET')}'")
+
+    
+
         
         try:
             # Handle various URL formats
@@ -868,6 +943,94 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     finally:
         if session_id in orchestrator.sessions:
             orchestrator.sessions[session_id].frontend_ws = None
+# Ultra-fast WebSocket endpoint for voice processing
+@app.websocket("/ws/voice")
+async def websocket_voice_endpoint(websocket: WebSocket):
+    """Ultra-fast WebSocket endpoint for voice processing with event bus"""
+    await websocket.accept()
+    session_id = f"voice_{int(time.time() * 1000)}"
+    logger.info(f"Ultra-fast WebSocket connected for session {session_id}")
+    
+    try:
+        # Create session with event bus integration
+        session = await orchestrator.create_session(session_id)
+        session.frontend_ws = websocket
+        
+        # Register ultra-fast processing handler
+        async def handle_ultra_fast_process(event_data):
+            """Handle ultra-fast processing events"""
+            try:
+                text = event_data["text"]
+                event_session_id = event_data["session_id"]
+                
+                # Skip if not for this session
+                if event_session_id != session.session_id:
+                    return
+                    
+                # Process immediately without waiting
+                await session._process_complete_sentence(session, text)
+                
+            except Exception as e:
+                logger.error(f"Error in ultra-fast processing handler: {e}")
+        
+        # Register the handler
+        session.event_bus.on("ultra_fast_process", handle_ultra_fast_process)
+        
+        # Send ready signal
+        await websocket.send_text(json.dumps({
+            "type": "ready",
+            "session_id": session_id,
+            "mode": "ultra_fast"
+        }))
+        
+        # Handle incoming messages
+        while True:
+            message = await websocket.receive()
+            
+            try:
+                if message["type"] == "websocket.receive":
+                    if "bytes" in message:
+                        # Audio data - forward to WhisperLive
+                        await orchestrator.send_audio_to_whisper(session_id, message["bytes"])
+                        
+                    elif "text" in message:
+                        data = json.loads(message["text"])
+                        
+                        if data.get("type") == "interrupt":
+                            await orchestrator.interrupt_session(session_id)
+                            
+                        elif data.get("type") == "end_audio":
+                            # Forward end signal to WhisperLive
+                            if session.whisper_ws:
+                                await session.whisper_ws.send("END_OF_AUDIO")
+                                
+                        elif data.get("type") == "ultra_fast_text":
+                            # Direct text processing for ultra-fast mode
+                            text = data.get("text", "").strip()
+                            if text:
+                                await session.process_ultra_fast(text)
+                                
+                elif message["type"] == "websocket.disconnect":
+                    logger.info(f"Ultra-fast WebSocket disconnect for session {session_id}")
+                    break
+                    
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON from ultra-fast client: {message}")
+            except Exception as e:
+                logger.error(f"Error handling ultra-fast message: {e}")
+                
+    except WebSocketDisconnect:
+        logger.info(f"Ultra-fast WebSocket disconnected for session {session_id}")
+    except Exception as e:
+        logger.error(f"Ultra-fast WebSocket error for session {session_id}: {e}")
+    finally:
+        if session_id in orchestrator.sessions:
+            # Clean up event handlers
+            session = orchestrator.sessions[session_id]
+            # Find and remove the handler by creating a closure
+            orchestrator.sessions[session_id].frontend_ws = None
+        await orchestrator.cleanup_session(session_id)
+
         await orchestrator.cleanup_session(session_id)
 
 # Health check endpoint
