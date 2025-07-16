@@ -41,3 +41,4 @@ Thumbs.db
 .claude_code_config.json
 
 path/
+.ruff_cache
