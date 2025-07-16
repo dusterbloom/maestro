@@ -71,6 +71,12 @@ export class VoiceOrchestratorClient {
     console.log('📨 Orchestrator message:', message.type);
     
     switch (message.type) {
+      case 'connection_established':
+        console.log('🎯 Connection established with session:', message.session_id);
+        // Trigger ready callback when connection is established
+        this.onReadyCallback?.();
+        break;
+        
       case 'ready':
         console.log('🎯 Voice Orchestrator ready');
         this.onReadyCallback?.();

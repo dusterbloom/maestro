@@ -10,7 +10,7 @@ import asyncio
 import logging
 import httpx
 import time
-from typing import AsyncIterable, Dict, Optional, Set
+from typing import AsyncIterable, Dict, Optional, Set, List
 
 from genai_processors import content_api
 from genai_processors import processor

@@ -4,7 +4,7 @@ Custom GenAI processors for voice orchestration system migration
 """
 
 from .config import config, GenAIProcessorsConfig, AudioConfig, VoiceMetadata
-from .whisper_live_processor import WhisperLiveProcessor
+from .whisper_live_processor import WhisperProcessor as WhisperLiveProcessor
 from .ollama_stream_processor import OllamaStreamProcessor  
 from .kokoro_tts_processor import KokoroTTSProcessor
 from .voice_activity_processor import VoiceActivityProcessor
