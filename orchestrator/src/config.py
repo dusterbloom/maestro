@@ -46,6 +46,12 @@ class Config:
     # WhisperLive Settings
     NO_SPEECH_THRESHOLD: float = float(os.getenv("NO_SPEECH_THRESHOLD", "0.45"))
     VAD_ENABLED: bool = os.getenv("VAD_ENABLED", "true").lower() == "true"
+    
+    # Plugin Configuration
+    MEMORY_PLUGIN_ENABLED: bool = os.getenv("MEMORY_PLUGIN_ENABLED", "true").lower() == "true"
+    SPEAKER_PLUGIN_ENABLED: bool = os.getenv("SPEAKER_PLUGIN_ENABLED", "true").lower() == "true"
+    PLUGIN_TIMEOUT: float = float(os.getenv("PLUGIN_TIMEOUT", "5.0"))
+    PLUGIN_MAX_WORKERS: int = int(os.getenv("PLUGIN_MAX_WORKERS", "2"))
 
 # Single config instance
 config = Config()

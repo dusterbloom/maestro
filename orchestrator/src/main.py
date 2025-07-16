@@ -12,8 +12,10 @@ import httpx
 import ollama
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from config import config
+from plugins import PluginManager, MemoryPlugin, SpeakerPlugin
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -75,6 +77,15 @@ class PipelineEventBus:
             self._logger.error(f"Error in event completion logging: {e}")
 
 app = FastAPI(title="Voice Stream Orchestrator", version="2.0.0")
+
+# Configure CORS for WebSocket connections
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class StreamSession:
     """
@@ -150,6 +161,10 @@ class VoiceStreamOrchestrator:
     def __init__(self):
         self.sessions: Dict[str, StreamSession] = {}
         self.event_bus = PipelineEventBus()
+        self.plugin_manager = PluginManager()
+        
+        # Initialize plugins
+        self._initialize_plugins()
         
         # Robust URL parsing for WhisperLive
         logger.info(f"Parsing WHISPER_URL: '{config.WHISPER_URL}'")
@@ -195,6 +210,50 @@ class VoiceStreamOrchestrator:
         # Start background tasks
         asyncio.create_task(self._session_cleanup_task())
         asyncio.create_task(self._connection_health_monitor())
+        
+    def _initialize_plugins(self) -> None:
+        """Initialize and register plugins."""
+        try:
+            # Register memory plugin
+            if config.MEMORY_PLUGIN_ENABLED:
+                from .plugins.base_plugin import PluginConfig
+                memory_config = PluginConfig(
+                    enabled=True,
+                    priority=1,
+                    max_workers=config.PLUGIN_MAX_WORKERS,
+                    timeout=config.PLUGIN_TIMEOUT
+                )
+                memory_plugin = MemoryPlugin(memory_config)
+                self.plugin_manager.register_plugin(memory_plugin)
+                logger.info("Memory plugin registered")
+            
+            # Register speaker plugin
+            if config.SPEAKER_PLUGIN_ENABLED:
+                from .plugins.base_plugin import PluginConfig
+                speaker_config = PluginConfig(
+                    enabled=True,
+                    priority=2,
+                    max_workers=config.PLUGIN_MAX_WORKERS,
+                    timeout=config.PLUGIN_TIMEOUT
+                )
+                speaker_plugin = SpeakerPlugin(speaker_config)
+                self.plugin_manager.register_plugin(speaker_plugin)
+                logger.info("Speaker plugin registered")
+            
+            # Start plugin manager
+            asyncio.create_task(self.plugin_manager.start_all())
+            logger.info("Plugins initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Error initializing plugins: {e}")
+    
+    async def cleanup_plugins(self) -> None:
+        """Cleanup all plugins."""
+        try:
+            await self.plugin_manager.stop_all()
+            logger.info("Plugins cleaned up")
+        except Exception as e:
+            logger.error(f"Error cleaning up plugins: {e}")
         
     def _is_websocket_connected(self, ws) -> bool:
         """Safely check if a WebSocket connection is still active"""
@@ -432,32 +491,48 @@ class VoiceStreamOrchestrator:
     async def send_audio_to_whisper(self, session_id: str, audio_data: bytes):
         """Forward audio data to WhisperLive with connection validation"""
         if session_id not in self.sessions:
+            logger.warning(f"❌ Session {session_id} not found")
             return False
             
         session = self.sessions[session_id]
         
         # Check connection health
         if not session.whisper_connected or not session.whisper_ws or not self._is_websocket_connected(session.whisper_ws):
-            logger.warning(f"WhisperLive not connected for session {session_id}, attempting reconnect")
+            logger.warning(f"🔄 WhisperLive not connected for session {session_id}, attempting reconnect")
             success = await self._connect_to_whisper(session)
             if not success:
+                logger.error(f"❌ Failed to reconnect WhisperLive for session {session_id}")
                 return False
                 
         try:
+            logger.info(f"📤 Sending {len(audio_data)} bytes of audio to WhisperLive for session {session_id}")
             await session.whisper_ws.send(audio_data)
             session.update_activity()
+            logger.info(f"✅ Successfully sent audio to WhisperLive for session {session_id}")
+            
+            # Emit plugin events for audio data
+            import numpy as np
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            await self.plugin_manager.emit_event("audio_data", {
+                "session_id": session_id,
+                "audio": audio_array.tolist(),
+                "timestamp": time.time(),
+                "user_id": session_id
+            })
+            
             return True
         except websockets.exceptions.ConnectionClosed:
-            logger.warning(f"WhisperLive connection closed while sending audio for session {session_id}")
+            logger.warning(f"❌ WhisperLive connection closed while sending audio for session {session_id}")
             session.whisper_connected = False
             return False
         except Exception as e:
-            logger.error(f"Failed to send audio to WhisperLive: {e}")
+            logger.error(f"❌ Failed to send audio to WhisperLive: {e}")
             return False
 
     async def _process_transcript_segments(self, session: StreamSession, segments):
         """Process transcript segments and trigger LLM+TTS when sentence is complete"""
         session.update_activity()
+        logger.info(f"🎯 Processing transcript segments for session {session.session_id}: {segments}")
         
         # Find completed segments
         completed_texts = []
@@ -468,6 +543,7 @@ class VoiceStreamOrchestrator:
                 text = segment["text"].strip()
                 if text and text not in [s.get("text", "") for s in session.conversation_history[-5:]]:
                     completed_texts.append(text)
+                    logger.info(f"✅ Completed text found: {text}")
             else:
                 # Incomplete segment for live transcript display
                 if segment.get("text"):
@@ -475,11 +551,20 @@ class VoiceStreamOrchestrator:
         
         # Send live transcript to frontend
         current_transcript = " ".join(current_transcript_parts).strip()
+        logger.info(f"📝 Current live transcript: {current_transcript}")
+        
         if current_transcript != session.current_transcript:
             session.current_transcript = current_transcript
             await self._send_to_frontend(session, {
                 "type": "live_transcript",
                 "text": current_transcript
+            })
+            
+            # Emit plugin events for live transcript
+            await self.plugin_manager.emit_event("live_transcript", {
+                "session_id": session.session_id,
+                "text": current_transcript,
+                "timestamp": time.time()
             })
         
         # Process completed sentences
@@ -493,6 +578,15 @@ class VoiceStreamOrchestrator:
             if self._is_sentence_complete(completed_text):
                 session.stt_end_time = time.time()
                 logger.info(f"Session {session.session_id}: Processing complete sentence: {completed_text}")
+                
+                # Emit plugin events for completed transcription
+                await self.plugin_manager.emit_event("transcription_complete", {
+                    "session_id": session.session_id,
+                    "text": completed_text,
+                    "timestamp": time.time(),
+                    "user_id": session.session_id  # Use session_id as user_id for now
+                })
+                
                 await self._process_complete_sentence(session, completed_text)
                 
     def _is_sentence_complete(self, text: str) -> bool:
@@ -817,9 +911,11 @@ class VoiceStreamOrchestrator:
         """Send message to frontend WebSocket"""
         if session.frontend_ws:
             try:
+                logger.info(f"📤 Sending to frontend: {message}")
                 await session.frontend_ws.send_text(json.dumps(message))
+                logger.info(f"✅ Successfully sent to frontend: {message.get('type', 'unknown')}")
             except Exception as e:
-                logger.error(f"Failed to send to frontend: {e}")
+                logger.error(f"❌ Failed to send to frontend: {e}")
                 
     async def interrupt_session(self, session_id: str) -> bool:
         """Interrupt TTS and processing for a session without dropping the WhisperLive connection."""
@@ -892,7 +988,7 @@ orchestrator = VoiceStreamOrchestrator()
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """Single WebSocket endpoint for all voice interactions"""
     await websocket.accept()
-    logger.info(f"Frontend WebSocket connected for session {session_id}")
+    logger.info(f"🎯 Frontend WebSocket connected for session {session_id}")
     
     try:
         # Create or get session
@@ -907,22 +1003,29 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         
         # Handle incoming frontend messages
         while True:
-            # Correct pattern for FastAPI WebSocket - use receive() 
+            # Correct pattern for FastAPI WebSocket - use receive()
             message = await websocket.receive()
+            logger.info(f"📥 Received frontend message: {message}")
             
             try:
                 if message["type"] == "websocket.receive":
                     if "bytes" in message:
                         # Audio data - forward to WhisperLive
-                        await orchestrator.send_audio_to_whisper(session_id, message["bytes"])
-                        
+                        logger.info(f"🎤 Received {len(message['bytes'])} bytes of audio data")
+                        success = await orchestrator.send_audio_to_whisper(session_id, message["bytes"])
+                        if not success:
+                            logger.error(f"❌ Failed to send audio to WhisperLive")
+                         
                     elif "text" in message:
                         data = json.loads(message["text"])
+                        logger.info(f"💬 Received text message: {data}")
                         
                         if data.get("type") == "interrupt":
+                            logger.info(f"🛑 Interrupt requested for session {session_id}")
                             await orchestrator.interrupt_session(session_id)
                             
                         elif data.get("type") == "end_audio":
+                            logger.info(f"🔚 End of audio signal received for session {session_id}")
                             # Forward end signal to WhisperLive
                             if session.whisper_ws:
                                 await session.whisper_ws.send("END_OF_AUDIO")
