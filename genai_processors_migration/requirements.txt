@@ -1,29 +1,61 @@
-# genai_processors_migration/requirements.txt
+# # genai_processors_migration/requirements.txt
 
-# --- Core Application Framework ---
-fastapi
-uvicorn[standard]
-ollama
+# # --- Core Application Framework ---
+# fastapi
+# uvicorn[standard]
+# ollama
 
-# --- GenAI Processors Framework ---
-genai-processors
+# # --- GenAI Processors Framework ---
+# genai-processors
 
-# --- Supporting Libraries ---
-httpx
-requests
-websockets
+# # --- Supporting Libraries ---
+# httpx
+# requests
+# websockets
+# python-multipart
+# numpy
+# pydantic
+# python-json-logger
+
+# # --- Audio Processing ---
+# # Add any audio processing libraries that genai-processors might need
+# librosa
+# soundfile
+# pyaudio
+
+# # --- Additional dependencies that might be needed ---
+# asyncio-mqtt
+# redis
+# aiofiles
+# Updated requirements.txt for genai-processors migration
+
+# Core GenAI Processors Framework
+genai-processors>=0.1.0
+google-genai>=1.0.0
+
+# FastAPI and Web Framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+websockets>=13.0
 python-multipart
-numpy
-pydantic
-python-json-logger
 
-# --- Audio Processing ---
-# Add any audio processing libraries that genai-processors might need
-librosa
-soundfile
-pyaudio
+# Audio Processing
+pyaudio>=0.2.11
+pydub>=0.25.1
+numpy>=1.24.0
+soundfile>=0.12.1
 
-# --- Additional dependencies that might be needed ---
-asyncio-mqtt
-redis
+# Configuration and Utilities
+pyyaml>=6.0
 aiofiles
+python-json-logger
+requests>=2.31.0
+aiohttp>=3.10.0
+
+# Additional processors (if needed)
+speechbrain>=0.5.0  # For speaker detection
+RealtimeSTT>=0.1.15  # For local STT if still needed
+
+# Development
+pytest>=7.0.0
+pytest-asyncio>=0.21.0

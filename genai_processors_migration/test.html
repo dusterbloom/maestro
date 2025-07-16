@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GenAI Processors Gateway - Test Interface</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+        }
+        
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+        
+        h1 {
+            color: #4a5568;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #718096;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        
+        .section {
+            margin: 25px 0;
+            padding: 20px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            background: #f7fafc;
+        }
+        
+        .section h3 {
+            margin-top: 0;
+            color: #2d3748;
+            border-bottom: 2px solid #4299e1;
+            padding-bottom: 10px;
+        }
+        
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 15px 0;
+            align-items: center;
+        }
+        
+        select, input, button {
+            padding: 12px 20px;
+            border: 2px solid #cbd5e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #4299e1, #3182ce);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        button:hover {
+            background: linear-gradient(135deg, #3182ce, #2c5aa0);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        button:disabled {
+            background: #a0aec0;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            font-weight: 600;
+            text-align: center;
+        }
+        
+        .status.connected {
+            background: #c6f6d5;
+            color: #276749;
+            border: 2px solid #9ae6b4;
+        }
+        
+        .status.disconnected {
+            background: #fed7d7;
+            color: #c53030;
+            border: 2px solid #feb2b2;
+        }
+        
+        .status.connecting {
+            background: #fef5e7;
+            color: #c05621;
+            border: 2px solid #f6ad55;
+        }
+        
+        .log {
+            background: #1a202c;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            margin: 15px 0;
+            border: 2px solid #4a5568;
+        }
+        
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-radius: 4px;
+        }
+        
+        .log-entry.info {
+            background: rgba(66, 153, 225, 0.1);
+            border-left: 3px solid #4299e1;
+        }
+        
+        .log-entry.error {
+            background: rgba(245, 101, 101, 0.1);
+            border-left: 3px solid #f56565;
+        }
+        
+        .log-entry.success {
+            background: rgba(72, 187, 120, 0.1);
+            border-left: 3px solid #48bb78;
+        }
+        
+        .pipeline-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .pipeline-card {
+            padding: 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .pipeline-card:hover {
+            border-color: #4299e1;
+            transform: translateY(-3px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+        
+        .pipeline-card.selected {
+            border-color: #4299e1;
+            background: #ebf8ff;
+        }
+        
+        .audio-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin: 15px 0;
+        }
+        
+        .volume-meter {
+            width: 200px;
+            height: 20px;
+            background: #e2e8f0;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 2px solid #cbd5e0;
+        }
+        
+        .volume-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #48bb78, #f6e05e, #f56565);
+            width: 0%;
+            transition: width 0.1s ease;
+        }
+        
+        .api-info {
+            background: #edf2f7;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #4299e1;
+        }
+        
+        .api-info h4 {
+            margin: 0 0 10px 0;
+            color: #2d3748;
+        }
+        
+        .endpoint {
+            font-family: monospace;
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 5px 10px;
+            border-radius: 4px;
+            margin: 5px 0;
+            display: inline-block;
+        }
+        
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .pipeline-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ GenAI Processors Gateway</h1>
+        <p class="subtitle">Real-time Voice Processing with Google Gemini & genai-processors</p>
+        
+        <!-- API Information -->
+        <div class="section">
+            <h3>📡 API Endpoints</h3>
+            <div class="api-info">
+                <h4>HTTP Endpoints:</h4>
+                <div class="endpoint">GET /health</div>
+                <div class="endpoint">GET /processors</div>
+                <div class="endpoint">GET /pipelines</div>
+                <div class="endpoint">GET /pipelines/registry</div>
+                <div class="endpoint">POST /pipelines/validate</div>
+            </div>
+            <div class="api-info">
+                <h4>WebSocket Endpoints:</h4>
+                <div class="endpoint">ws://localhost:8000/ws/{pipeline_name}</div>
+                <div class="endpoint">ws://localhost:8000/ws/live/{model_name}</div>
+                <div class="endpoint">ws://localhost:8000/ws/test</div>
+            </div>
+        </div>
+
+        <!-- Connection Status -->
+        <div class="section">
+            <h3>🔌 Connection Status</h3>
+            <div id="connectionStatus" class="status disconnected">
+                Disconnected
+            </div>
+            
+            <div class="controls">
+                <select id="pipelineSelect">
+                    <option value="">Select Pipeline...</option>
+                    <optgroup label="Built-in Registry">
+                        <option value="audio_to_text">Audio to Text</option>
+                        <option value="text_to_audio">Text to Audio</option>
+                        <option value="full_voice">Full Voice Pipeline</option>
+                        <option value="realtime_agent">Realtime Agent</option>
+                    </optgroup>
+                    <optgroup label="Original Pipelines">
+                        <option value="stt_only">STT Only</option>
+                        <option value="stt_llm">STT + LLM</option>
+                        <option value="full_pipeline">Full Pipeline</option>
+                        <option value="analysis_pipeline">Analysis Pipeline</option>
+                        <option value="remote_stt_pipeline">Remote STT Pipeline</option>
+                    </optgroup>
+                    <optgroup label="New Pipelines">
+                        <option value="voice_chat">Voice Chat</option>
+                        <option value="hybrid_agent">Hybrid Agent</option>
+                        <option value="local_voice_agent">Local Voice Agent</option>
+                    </optgroup>
+                    <optgroup label="Live API">
+                        <option value="live/gemini-2.5-flash-preview-native-audio-dialog">Gemini Live Agent</option>
+                    </optgroup>
+                    <optgroup label="Test Endpoints">
+                        <option value="test">Test WebSocket</option>
+                        <option value="echo">Echo WebSocket</option>
+                    </optgroup>
+                </select>
+                
+                <button id="connectBtn" onclick="toggleConnection()">Connect</button>
+                <button id="clearLogBtn" onclick="clearLog()">Clear Log</button>
+                <button onclick="loadPipelines()">Refresh Pipelines</button>
+            </div>
+        </div>
+
+        <!-- Audio Controls -->
+        <div class="section">
+            <h3>🎤 Audio Controls</h3>
+            
+            <div class="audio-controls">
+                <button id="micBtn" onclick="toggleMicrophone()" disabled>Start Microphone</button>
+                <button id="recordBtn" onclick="toggleRecording()" disabled>Start Recording</button>
+                
+                <label>Volume:</label>
+                <div class="volume-meter">
+                    <div id="volumeBar" class="volume-bar"></div>
+                </div>
+            </div>
+            
+            <div class="controls">
+                <input type="text" id="textInput" placeholder="Type message to send..." style="flex: 1;">
+                <button onclick="sendTextMessage()">Send Text</button>
+                <button onclick="sendTestAudio()">Send Test Audio</button>
+            </div>
+        </div>
+
+        <!-- Pipeline Configuration -->
+        <div class="section">
+            <h3>⚙️ Available Pipelines</h3>
+            <div id="pipelinesGrid" class="pipeline-grid">
+                <!-- Pipelines will be loaded here -->
+            </div>
+        </div>
+
+        <!-- Message Log -->
+        <div class="section">
+            <h3>📝 Message Log</h3>
+            <div id="messageLog" class="log">
+                <div class="log-entry info">Ready to connect...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let mediaRecorder = null;
+        let audioStream = null;
+        let isRecording = false;
+        let isConnected = false;
+        let selectedPipeline = '';
+
+        // Initialize page
+        window.onload = function() {
+            loadPipelines();
+            checkServerHealth();
+        };
+
+        // Connection Management
+        function toggleConnection() {
+            if (isConnected) {
+                disconnect();
+            } else {
+                connect();
+            }
+        }
+
+        function connect() {
+            selectedPipeline = document.getElementById('pipelineSelect').value;
+            if (!selectedPipeline) {
+                logMessage('Please select a pipeline first', 'error');
+                return;
+            }
+
+            const wsUrl = `ws://localhost:8000/ws/${selectedPipeline}`;
+            logMessage(`Connecting to ${wsUrl}...`, 'info');
+            
+            updateStatus('connecting', 'Connecting...');
+            
+            try {
+                ws = new WebSocket(wsUrl);
+                
+                ws.onopen = function() {
+                    isConnected = true;
+                    updateStatus('connected', `Connected to ${selectedPipeline}`);
+                    logMessage('WebSocket connected successfully', 'success');
+                    
+                    document.getElementById('connectBtn').textContent = 'Disconnect';
+                    document.getElementById('micBtn').disabled = false;
+                    document.getElementById('recordBtn').disabled = false;
+                };
+                
+                ws.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        logMessage(`Received: ${JSON.stringify(data, null, 2)}`, 'success');
+                        
+                        // Handle different message types
+                        if (data.type === 'text') {
+                            logMessage(`Text Response: ${data.data}`, 'success');
+                        } else if (data.type === 'audio') {
+                            logMessage(`Received audio data (${data.data.length} bytes)`, 'info');
+                            // Could play audio here
+                        } else if (data.type === 'error') {
+                            logMessage(`Error: ${data.data}`, 'error');
+                        } else if (data.type === 'ready') {
+                            logMessage(`Pipeline ready: ${data.data}`, 'success');
+                        }
+                    } catch (e) {
+                        logMessage(`Raw message: ${event.data}`, 'info');
+                    }
+                };
+                
+                ws.onerror = function(error) {
+                    logMessage(`WebSocket error: ${error}`, 'error');
+                };
+                
+                ws.onclose = function() {
+                    isConnected = false;
+                    updateStatus('disconnected', 'Disconnected');
+                    logMessage('WebSocket disconnected', 'info');
+                    
+                    document.getElementById('connectBtn').textContent = 'Connect';
+                    document.getElementById('micBtn').disabled = true;
+                    document.getElementById('recordBtn').disabled = true;
+                    
+                    stopMicrophone();
+                    stopRecording();
+                };
+            } catch (error) {
+                logMessage(`Connection failed: ${error}`, 'error');
+                updateStatus('disconnected', 'Connection Failed');
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+            stopMicrophone();
+            stopRecording();
+        }
+
+        // Audio Management
+        async function toggleMicrophone() {
+            if (audioStream) {
+                stopMicrophone();
+            } else {
+                await startMicrophone();
+            }
+        }
+
+        async function startMicrophone() {
+            try {
+                audioStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    } 
+                });
+                
+                document.getElementById('micBtn').textContent = 'Stop Microphone';
+                logMessage('Microphone started', 'success');
+                
+                // Setup audio level monitoring
+                const audioContext = new AudioContext();
+                const source = audioContext.createMediaStreamSource(audioStream);
+                const analyser = audioContext.createAnalyser();
+                source.connect(analyser);
+                
+                const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                
+                function updateVolume() {
+                    if (audioStream) {
+                        analyser.getByteFrequencyData(dataArray);
+                        const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+                        const volumePercent = (average / 255) * 100;
+                        document.getElementById('volumeBar').style.width = volumePercent + '%';
+                        requestAnimationFrame(updateVolume);
+                    }
+                }
+                updateVolume();
+                
+            } catch (error) {
+                logMessage(`Microphone error: ${error}`, 'error');
+            }
+        }
+
+        function stopMicrophone() {
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+                audioStream = null;
+                document.getElementById('micBtn').textContent = 'Start Microphone';
+                document.getElementById('volumeBar').style.width = '0%';
+                logMessage('Microphone stopped', 'info');
+            }
+        }
+
+        function toggleRecording() {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        }
+
+        function startRecording() {
+            if (!audioStream) {
+                logMessage('Start microphone first', 'error');
+                return;
+            }
+            
+            if (!isConnected) {
+                logMessage('Connect to WebSocket first', 'error');
+                return;
+            }
+
+            try {
+                mediaRecorder = new MediaRecorder(audioStream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+                
+                mediaRecorder.ondataavailable = function(event) {
+                    if (event.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+                        // Convert to base64 and send
+                        const reader = new FileReader();
+                        reader.onload = function() {
+                            const base64Data = reader.result.split(',')[1];
+                            const message = {
+                                type: 'audio',
+                                data: base64Data,
+                                sample_rate: 16000,
+                                channels: 1
+                            };
+                            ws.send(JSON.stringify(message));
+                        };
+                        reader.readAsDataURL(event.data);
+                    }
+                };
+                
+                mediaRecorder.start(100); // Send data every 100ms
+                isRecording = true;
+                document.getElementById('recordBtn').textContent = 'Stop Recording';
+                logMessage('Recording started', 'success');
+                
+            } catch (error) {
+                logMessage(`Recording error: ${error}`, 'error');
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+                document.getElementById('recordBtn').textContent = 'Start Recording';
+                logMessage('Recording stopped', 'info');
+                
+                // Send end signal
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'audio_end' }));
+                }
+            }
+        }
+
+        // Message Handling
+        function sendTextMessage() {
+            const input = document.getElementById('textInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            if (!isConnected) {
+                logMessage('Not connected to WebSocket', 'error');
+                return;
+            }
+            
+            const data = {
+                type: 'text',
+                data: message
+            };
+            
+            ws.send(JSON.stringify(data));
+            logMessage(`Sent: ${message}`, 'info');
+            input.value = '';
+        }
+
+        function sendTestAudio() {
+            if (!isConnected) {
+                logMessage('Not connected to WebSocket', 'error');
+                return;
+            }
+            
+            // Send a test audio message
+            const testMessage = {
+                type: 'audio',
+                data: btoa('fake_audio_data_for_testing'),
+                sample_rate: 16000,
+                channels: 1
+            };
+            
+            ws.send(JSON.stringify(testMessage));
+            logMessage('Sent test audio data', 'info');
+        }
+
+        // UI Management
+        function updateStatus(statusClass, message) {
+            const statusEl = document.getElementById('connectionStatus');
+            statusEl.className = `status ${statusClass}`;
+            statusEl.textContent = message;
+        }
+
+        function logMessage(message, type = 'info') {
+            const log = document.getElementById('messageLog');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('messageLog').innerHTML = 
+                '<div class="log-entry info">Log cleared...</div>';
+        }
+
+        // API Functions
+        async function checkServerHealth() {
+            try {
+                const response = await fetch('/health');
+                const data = await response.json();
+                logMessage(`Server health: ${data.status}`, 'success');
+            } catch (error) {
+                logMessage(`Server health check failed: ${error}`, 'error');
+            }
+        }
+
+        async function loadPipelines() {
+            try {
+                const [pipelinesResponse, registryResponse] = await Promise.all([
+                    fetch('/pipelines'),
+                    fetch('/pipelines/registry')
+                ]);
+                
+                const pipelines = await pipelinesResponse.json();
+                const registry = await registryResponse.json();
+                
+                logMessage(`Loaded ${Object.keys(pipelines).length} configured pipelines`, 'success');
+                logMessage(`Loaded ${Object.keys(registry).length} registry pipelines`, 'success');
+                
+                displayPipelines(pipelines, registry);
+                
+            } catch (error) {
+                logMessage(`Failed to load pipelines: ${error}`, 'error');
+            }
+        }
+
+        function displayPipelines(pipelines, registry) {
+            const grid = document.getElementById('pipelinesGrid');
+            grid.innerHTML = '';
+            
+            // Add registry pipelines
+            Object.entries(registry).forEach(([name, description]) => {
+                const card = createPipelineCard(name, description, 'registry');
+                grid.appendChild(card);
+            });
+            
+            // Add configured pipelines
+            Object.entries(pipelines).forEach(([name, config]) => {
+                const description = `${config.length} processors: ${config.join(' → ')}`;
+                const card = createPipelineCard(name, description, 'configured');
+                grid.appendChild(card);
+            });
+        }
+
+        function createPipelineCard(name, description, type) {
+            const card = document.createElement('div');
+            card.className = 'pipeline-card';
+            card.innerHTML = `
+                <h4>${name} <span style="font-size:0.8em;color:#666;">(${type})</span></h4>
+                <p style="font-size:0.9em;color:#666;">${description}</p>
+            `;
+            
+            card.onclick = function() {
+                document.querySelectorAll('.pipeline-card').forEach(c => c.classList.remove('selected'));
+                card.classList.add('selected');
+                document.getElementById('pipelineSelect').value = name;
+                logMessage(`Selected pipeline: ${name}`, 'info');
+            };
+            
+            return card;
+        }
+
+        // Keyboard shortcuts
+        document.getElementById('textInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendTextMessage();
+            }
+        });
+
+        // Handle page unload
+        window.addEventListener('beforeunload', function() {
+            disconnect();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,85 @@
+pipelines:
+  # Backward compatibility - Original pipeline names
+  stt_only:
+    - audio_preprocessor
+    - stt_router
+  
+  stt_llm:
+    - audio_preprocessor
+    - stt_router
+    - llm_router
+  
+  full_pipeline:
+    - audio_preprocessor
+    - stt_router
+    - text_to_llm
+    - tts_pipeline
+  
+  analysis_pipeline:
+    - audio_preprocessor
+    - stt_router
+    - llm_router
+    - tts_router
+  
+  remote_stt_pipeline:
+    - audio_preprocessor
+    - google_stt
+    - llm_router
+    - tts_router
+
+  # New standardized pipeline names
+  audio_to_text:
+    - audio_preprocessor
+    - stt_router
+  
+  text_to_speech:
+    - tts_pipeline
+  
+  text_chat:
+    - text_to_llm
+  
+  # Voice processing pipelines
+  voice_to_text:
+    - audio_input
+    - google_stt
+  
+  voice_chat:
+    - audio_preprocessor
+    - stt_router
+    - llm_router
+  
+  full_voice_pipeline:
+    - audio_preprocessor
+    - stt_router
+    - text_to_llm
+    - tts_pipeline
+  
+  # Advanced pipelines
+  realtime_voice_agent:
+    - audio_input
+    - google_stt
+    - gemini_model
+    - tts_router
+  
+  local_voice_agent:
+    - audio_preprocessor
+    - local_stt
+    - ollama_model
+    - kokoro_tts
+  
+  hybrid_agent:
+    - audio_preprocessor
+    - stt_router
+    - llm_router
+    - tts_router
+  
+  # Testing pipelines
+  stt_test:
+    - audio_preprocessor
+    - stt_router
+  
+  llm_test:
+    - text_to_llm
+  
+  tts_test:
+    - tts_pipeline

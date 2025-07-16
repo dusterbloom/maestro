@@ -1,0 +1,113 @@
+processors:
+  # Audio Processing
+  audio_preprocessor:
+    module: processors.audio.audio_processor
+    class: AudioProcessor
+    params:
+      target_sample_rate: 16000
+      target_channels: 1
+  
+  audio_input:
+    module: processors.audio.audio_processor
+    class: AudioInputProcessor
+    params:
+      sample_rate: 16000
+      use_pcm_mimetype: true
+  
+  # Speech-to-Text
+  google_stt:
+    module: processors.stt.speech_to_text
+    class: SpeechToTextProcessor
+    params:
+      project_id: ${GOOGLE_PROJECT_ID}
+      language_code: "en-US"
+      with_interim_results: false
+  
+  local_stt:
+    module: processors.stt.speech_to_text
+    class: LocalSTTProcessor
+    params:
+      model_size: "base"
+      language: "en"
+  
+  stt_router:
+    module: processors.stt.speech_to_text
+    class: STTRouterProcessor
+    params:
+      project_id: ${GOOGLE_PROJECT_ID}
+      prefer_cloud: true
+  
+  # Large Language Models
+  gemini_model:
+    module: processors.llm.genai_model
+    class: GenaiModelProcessor
+    params:
+      api_key: ${GOOGLE_API_KEY}
+      model_name: ${GEMINI_MODEL:-gemini-2.0-flash-001}
+      temperature: 0.7
+      system_instruction: "You are a helpful AI assistant. Keep responses concise but informative."
+  
+  ollama_model:
+    module: processors.llm.genai_model
+    class: OllamaProcessor
+    params:
+      service_url: http://localhost:11434
+      model_name: ${OLLAMA_MODEL:-gemma2:7b}
+      temperature: 0.7
+      system_prompt: "You are a helpful AI assistant."
+  
+  llm_router:
+    module: processors.llm.genai_model
+    class: LLMRouterProcessor
+    params:
+      api_key: ${GOOGLE_API_KEY}
+      prefer_gemini: true
+      gemini_model: ${GEMINI_MODEL:-gemini-2.0-flash-001}
+      ollama_model: ${OLLAMA_MODEL:-gemma2:7b}
+      system_instruction: "You are a helpful voice assistant."
+  
+  text_to_llm:
+    module: processors.llm.genai_model
+    class: TextToLLMProcessor
+    params:
+      llm_config:
+        api_key: ${GOOGLE_API_KEY}
+        prefer_gemini: true
+        system_instruction: "You are a helpful assistant."
+  
+  # Text-to-Speech
+  google_tts:
+    module: processors.tts.text_to_speech
+    class: TextToSpeechProcessor
+    params:
+      project_id: ${GOOGLE_PROJECT_ID}
+      language_code: "en-US"
+      speaking_rate: 1.0
+  
+  kokoro_tts:
+    module: processors.tts.text_to_speech
+    class: KokoroTTSProcessor
+    params:
+      service_url: ${KOKORO_URL:-http://localhost:8880}
+      voice: ${TTS_VOICE:-af_bella}
+      speed: 1.1
+  
+  tts_router:
+    module: processors.tts.text_to_speech
+    class: TTSRouterProcessor
+    params:
+      project_id: ${GOOGLE_PROJECT_ID}
+      prefer_google: true
+      kokoro_url: ${KOKORO_URL:-http://localhost:8880}
+      voice: ${TTS_VOICE:-af_bella}
+  
+  tts_pipeline:
+    module: processors.tts.text_to_speech
+    class: TextToSpeechPipeline
+    params:
+      tts_config:
+        project_id: ${GOOGLE_PROJECT_ID}
+        prefer_google: true
+        voice: ${TTS_VOICE:-af_bella}
+      with_audio_output: true
+      with_rate_limiting: true
