@@ -911,11 +911,31 @@ class VoiceStreamOrchestrator:
         finally:
             session.is_processing = False
             session.processing_text = None # Clear the processing text
-            # Reset the abort event when processing ends to prevent infinite loops
+            
+            # Emit state transition event
+            current_time = time.time()
             if session.tts_abort_event.is_set():
+                # Interrupted processing
                 session.tts_abort_event.clear()
                 logger.info(f"Session {session.session_id}: Cleared abort event after interruption")
+                
+                await session.event_bus.emit("state_transition", {
+                    "session_id": session.session_id,
+                    "from_state": "processing",
+                    "to_state": "interrupted",
+                    "text": text,
+                    "timestamp": current_time
+                })
             else:
+                # Completed processing normally
+                await session.event_bus.emit("state_transition", {
+                    "session_id": session.session_id,
+                    "from_state": "processing",
+                    "to_state": "idle",
+                    "text": text,
+                    "timestamp": current_time
+                })
+                
                 # Only send processing_complete if not interrupted
                 await self._send_to_frontend(session, {
                     "type": "processing_complete"
