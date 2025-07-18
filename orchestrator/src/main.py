@@ -689,12 +689,39 @@ class VoiceStreamOrchestrator:
             import numpy as np
             # Audio data is now Float32Array format (not int16)
             audio_array = np.frombuffer(audio_data, dtype=np.float32)
+            current_time = time.time()
+            
+            # Calculate audio level for monitoring
+            audio_level = np.abs(audio_array).mean()
+            voice_threshold = 0.01  # Adjust based on testing
+            voice_detected = audio_level > voice_threshold
+            
+            # Emit standard audio_data event
             await self.plugin_manager.emit_event("audio_data", {
                 "session_id": session_id,
                 "audio": audio_array.tolist(),
-                "timestamp": time.time(),
+                "timestamp": current_time,
                 "user_id": session_id
             })
+            
+            # Emit continuous audio monitoring event via session event bus (fire-and-forget)
+            await session.event_bus.emit("audio_monitor", {
+                "session_id": session_id,
+                "audio_level": float(audio_level),
+                "voice_detected": voice_detected,
+                "is_processing": session.is_processing,
+                "tts_active": session.tts_active,
+                "timestamp": current_time
+            })
+            
+            # If voice detected during TTS, emit potential interrupt event
+            if voice_detected and session.tts_active:
+                logger.info(f"🗣️ Voice detected during TTS for session {session_id}, audio level: {audio_level}")
+                await session.event_bus.emit("voice_during_tts", {
+                    "session_id": session_id,
+                    "audio_level": float(audio_level),
+                    "timestamp": current_time
+                })
             
             return True
         except websockets.exceptions.ConnectionClosed:
