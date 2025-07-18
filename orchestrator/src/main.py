@@ -618,13 +618,13 @@ class VoiceStreamOrchestrator:
                 # Try to interpret as Int16Array
                 try:
                     first_samples_int16 = struct.unpack('<hhhhhhhh', audio_data[:16])
-                    logger.debug(f"🔍 First 8 samples as Int16: {first_samples_int16}")
+                    # logger.debug(f"🔍 First 8 samples as Int16: {first_samples_int16}")
                 except struct.error as e:
                     logger.debug(f"🔍 Cannot interpret as Int16: {e}")
                 # --- ADDED: Log audio stats for debugging ---
                 import numpy as np
                 audio_array = np.frombuffer(audio_data, dtype=np.float32)
-                logger.info(f"🔊 Audio stats: min={audio_array.min()}, max={audio_array.max()}, mean={audio_array.mean()}, std={audio_array.std()}")
+                # logger.info(f"🔊 Audio stats: min={audio_array.min()}, max={audio_array.max()}, mean={audio_array.mean()}, std={audio_array.std()}")
                 # --- END ADDED ---            
             # Check if audio_data is actually bytes vs string
             if isinstance(audio_data, str):

@@ -28,6 +28,27 @@ export function useAutoInterrupt() {
   
   useEffect(() => {
     if (!shouldMonitorForInterruption || !voiceWebSocket) {
+      // Clean up if we should stop monitoring
+      if (voiceActivityTimeoutRef.current) {
+        clearTimeout(voiceActivityTimeoutRef.current)
+      }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close()
+        audioContextRef.current = null
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+        streamRef.current = null
+      }
+      analyserRef.current = null
+      return
+    }
+    
+    // Don't start if already running
+    if (analyserRef.current && audioContextRef.current) {
       return
     }
     
@@ -89,12 +110,12 @@ export function useAutoInterrupt() {
               const timeSinceLastInterrupt = now - lastInterruptTimeRef.current
               
               // Only interrupt if enough time has passed since last interrupt
-              if (timeSinceLastInterrupt > 500) {
+              if (timeSinceLastInterrupt > 2000) { // Increased to 2 seconds to prevent loops
                 console.log('🛑 Auto-interrupting due to voice activity (lightweight detection)')
                 voiceWebSocket.interrupt()
                 lastInterruptTimeRef.current = now
               }
-            }, 100) // 100ms debounce
+            }, 200) // Increased debounce to 200ms
           }
           
           // Continue monitoring
