@@ -7,7 +7,7 @@ import asyncio
 import time
 import logging
 from typing import Dict, Any, Optional
-from plugins.base_plugin import BasePlugin, PluginConfig
+from plugins.base_plugin import BasePlugin, PluginConfig, Event
 
 logger = logging.getLogger(__name__)
 
