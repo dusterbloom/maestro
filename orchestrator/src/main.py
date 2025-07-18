@@ -320,6 +320,18 @@ class VoiceStreamOrchestrator:
                 self.plugin_manager.register_plugin(speaker_plugin)
                 logger.info("Speaker plugin registered")
             
+            # Register interrupt plugin (always enabled for voice activity detection)
+            from .plugins.base_plugin import PluginConfig
+            interrupt_config = PluginConfig(
+                enabled=True,
+                priority=0,  # Highest priority for interrupt detection
+                max_workers=config.PLUGIN_MAX_WORKERS,
+                timeout=config.PLUGIN_TIMEOUT
+            )
+            interrupt_plugin = InterruptPlugin(interrupt_config)
+            self.plugin_manager.register_plugin(interrupt_plugin)
+            logger.info("Interrupt plugin registered")
+            
             # Start plugin manager
             asyncio.create_task(self.plugin_manager.start_all())
             logger.info("Plugins initialized successfully")
