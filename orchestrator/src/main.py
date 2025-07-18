@@ -1337,17 +1337,6 @@ async def websocket_voice_endpoint(websocket: WebSocket):
         # Register the handler
         session.event_bus.on("ultra_fast_process", handle_ultra_fast_process)
         
-        # Handler for interrupt requests from InterruptPlugin
-        async def handle_interrupt_request(event_data):
-            try:
-                session_id = event_data.get("session_id")
-                if session_id:
-                    logger.info(f"🛑 Interrupt request received for session {session_id}")
-                    await self.interrupt_session(session_id)
-            except Exception as e:
-                logger.error(f"Error in interrupt request handler: {e}")
-        
-        session.event_bus.on("interrupt_requested", handle_interrupt_request)
         
         # Send ready signal
         await websocket.send_text(json.dumps({
