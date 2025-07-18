@@ -196,6 +196,9 @@ class StreamSession:
         # Event bus for ultra-fast processing
         self.event_bus = PipelineEventBus()
         
+        # Event-driven segment deduplication
+        self.segment_cache = SegmentCache()
+        
         # Connection state
         self.whisper_connected = False
         self.connection_retries = 0
