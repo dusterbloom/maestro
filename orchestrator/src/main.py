@@ -124,6 +124,45 @@ async def startup_event():
     logger.info("Async exception handler set up")
     logger.info("Voice Stream Orchestrator starting up...")
 
+class SegmentCache:
+    """Event-driven segment deduplication cache for streaming transcription"""
+    
+    def __init__(self, ttl_seconds: int = 30):
+        self.cache: Dict[str, float] = {}
+        self.ttl_seconds = ttl_seconds
+    
+    def get_segment_hash(self, text: str, timestamp: float) -> str:
+        """Generate hash for segment based on text and time window"""
+        # Create time window to group similar segments
+        time_window = int(timestamp / 5)  # 5-second windows
+        content = f"{text.strip().lower()}_{time_window}"
+        return hashlib.md5(content.encode()).hexdigest()
+    
+    def has_segment(self, text: str, timestamp: float) -> bool:
+        """Check if segment was already processed"""
+        self._cleanup_expired()
+        segment_hash = self.get_segment_hash(text, timestamp)
+        return segment_hash in self.cache
+    
+    def add_segment(self, text: str, timestamp: float):
+        """Add segment to cache"""
+        segment_hash = self.get_segment_hash(text, timestamp)
+        self.cache[segment_hash] = timestamp
+    
+    def _cleanup_expired(self):
+        """Remove expired segments"""
+        current_time = time.time()
+        expired_keys = [
+            key for key, timestamp in self.cache.items()
+            if current_time - timestamp > self.ttl_seconds
+        ]
+        for key in expired_keys:
+            del self.cache[key]
+    
+    def clear(self):
+        """Clear all segments"""
+        self.cache.clear()
+
 class StreamSession:
     """
     Represents a single voice conversation session with all its components
