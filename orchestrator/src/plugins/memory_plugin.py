@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 import json
 import time
 from datetime import datetime, timedelta
-from .base_plugin import BasePlugin, Event, PluginConfig
+from plugins.base_plugin import BasePlugin, Event, PluginConfig
 
 logger = logging.getLogger(__name__)
 
