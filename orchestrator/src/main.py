@@ -332,6 +332,9 @@ class VoiceStreamOrchestrator:
             self.plugin_manager.register_plugin(interrupt_plugin)
             logger.info("Interrupt plugin registered")
             
+            # Set up interrupt event routing
+            self._setup_interrupt_event_routing()
+            
             # Start plugin manager
             asyncio.create_task(self.plugin_manager.start_all())
             logger.info("Plugins initialized successfully")
