@@ -329,6 +329,7 @@ class VoiceStreamOrchestrator:
                 timeout=config.PLUGIN_TIMEOUT
             )
             interrupt_plugin = InterruptPlugin(interrupt_config)
+            interrupt_plugin.orchestrator = self  # Pass orchestrator reference
             self.plugin_manager.register_plugin(interrupt_plugin)
             logger.info("Interrupt plugin registered")
             
