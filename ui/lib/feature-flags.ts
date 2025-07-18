@@ -5,7 +5,7 @@ export interface FeatureFlags {
 
 export const featureFlags: FeatureFlags = {
   // Toggle between old and new VoiceButton architecture
-  useNewVoiceButton: process.env.NEXT_PUBLIC_USE_NEW_VOICE_BUTTON === 'true',
+  useNewVoiceButton: process.env.NEXT_PUBLIC_USE_NEW_VOICE_BUTTON !== 'false',
 };
 
 // Helper function to check if a feature is enabled

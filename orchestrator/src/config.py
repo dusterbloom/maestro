@@ -8,7 +8,7 @@ class Config:
     """Centralized configuration - reads from environment with sensible defaults"""
     
     # Service URLs
-    WHISPER_URL: str = os.getenv("WHISPER_URL", "http://whisper-live:9090")
+    WHISPER_URL: str = os.getenv("WHISPER_URL", "ws://whisper-live:9090")
     OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
     TTS_URL: str = os.getenv("TTS_URL", "http://kokoro:8880")
     AMEM_URL: str = os.getenv("AMEM_URL", "http://a-mem:8001")
@@ -44,8 +44,8 @@ class Config:
     TTS_TIMEOUT: float = float(os.getenv("TTS_TIMEOUT", "10.0"))
     
     # WhisperLive Settings
-    NO_SPEECH_THRESHOLD: float = float(os.getenv("NO_SPEECH_THRESHOLD", "0.45"))
-    VAD_ENABLED: bool = os.getenv("VAD_ENABLED", "true").lower() == "true"
+    NO_SPEECH_THRESHOLD: float = float(os.getenv("NO_SPEECH_THRESHOLD", "0.1"))
+    VAD_ENABLED: bool = os.getenv("VAD_ENABLED", "false").lower() == "false"
     
     # Plugin Configuration
     MEMORY_PLUGIN_ENABLED: bool = os.getenv("MEMORY_PLUGIN_ENABLED", "true").lower() == "true"

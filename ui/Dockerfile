@@ -17,12 +17,15 @@ COPY . .
 
 # Build the application
 RUN npm run build
+# alternative build command for debugging
+#RUN NODE_OPTIONS="--max-old-space-size=4096" npm run build
 
 # Production image, copy all the files and run next
 FROM base AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV NEXT_PUBLIC_USE_NEW_VOICE_BUTTON=true
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs

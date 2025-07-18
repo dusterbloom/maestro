@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DESIGN_TOKENS } from '../design-system';
 import VoiceButton from '@/components/VoiceButton';
 import StatusIndicator from '@/components/StatusIndicator';
 import Waveform from '@/components/Waveform';
+import TranscriptDebug from '@/components/TranscriptDebug';
 
 export default function Home() {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected' | 'recording' | 'processing' | 'error'>('idle');
@@ -31,12 +32,8 @@ export default function Home() {
       <div className="max-w-md w-full text-center space-y-8">
         {/* Header */}
         <div className="space-y-2">
-          <h1 className="text-4xl font-bold text-gray-800">
-            <h1 className={DESIGN_TOKENS.heading}>Voice Assistant</h1>
-          </h1>
-          <p className="text-gray-600">
-            <p className={DESIGN_TOKENS.body}>Ultra-low-latency voice orchestration</p>
-          </p>
+          <h1 className={DESIGN_TOKENS.heading}>Voice Assistant</h1>
+          <p className={DESIGN_TOKENS.body}>Ultra-low-latency voice orchestration</p>
         </div>
         
         {/* Status Indicator */}

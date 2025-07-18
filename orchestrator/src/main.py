@@ -4,6 +4,8 @@ import logging
 import os
 import time
 import base64
+import traceback
+import sys
 from typing import Dict, Set, Optional, Any, Callable
 from urllib.parse import urlparse
 import websockets
@@ -17,9 +19,34 @@ from pydantic import BaseModel
 from config import config
 from plugins import PluginManager, MemoryPlugin, SpeakerPlugin
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging with more detailed format
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Global exception handler for unhandled exceptions
+def global_exception_handler(exctype, value, tb):
+    """Handle uncaught exceptions with detailed logging"""
+    logger.critical("UNCAUGHT EXCEPTION", exc_info=(exctype, value, tb))
+    logger.critical(f"Exception type: {exctype.__name__}")
+    logger.critical(f"Exception value: {value}")
+    logger.critical(f"Traceback: {''.join(traceback.format_tb(tb))}")
+    
+# Set the global exception handler
+sys.excepthook = global_exception_handler
+
+# Handle async exceptions
+def handle_async_exception(loop, context):
+    """Handle exceptions in async tasks"""
+    logger.critical(f"ASYNC EXCEPTION: {context}")
+    if 'exception' in context:
+        logger.critical(f"Exception: {context['exception']}")
+        logger.critical(f"Exception type: {type(context['exception']).__name__}")
+        
+# Set async exception handler (will be set on the event loop when it's created)
+# asyncio.set_exception_handler(handle_async_exception) - This doesn't exist, need to set on loop
 
 class PipelineEventBus:
     """
@@ -86,6 +113,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Set up async exception handler on startup
+@app.on_event("startup")
+async def startup_event():
+    """Set up async exception handler when the app starts"""
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(handle_async_exception)
+    logger.info("Async exception handler set up")
+    logger.info("Voice Stream Orchestrator starting up...")
 
 class StreamSession:
     """
@@ -277,21 +313,32 @@ class VoiceStreamOrchestrator:
         
     async def create_session(self, session_id: str) -> StreamSession:
         """Create a new voice session with improved WhisperLive connection"""
+        logger.debug(f"Creating new session: {session_id}")
+        
         if session_id in self.sessions:
+            logger.debug(f"Session {session_id} already exists, cleaning up old session")
             await self.cleanup_session(session_id)
             
+        logger.debug(f"Creating StreamSession object for {session_id}")
         session = StreamSession(session_id)
+        logger.debug(f"StreamSession created for {session_id}")
         
         # Establish WhisperLive connection with proper headers
+        logger.debug(f"Establishing WhisperLive connection for session {session_id}")
         success = await self._connect_to_whisper(session)
         if not success:
+            logger.error(f"Failed to establish WhisperLive connection for session {session_id}")
             raise ConnectionError(f"Failed to connect to WhisperLive after {session.max_retries} attempts")
             
+        logger.debug(f"WhisperLive connection established for session {session_id}")
         self.sessions[session_id] = session
+        logger.debug(f"Session {session_id} added to orchestrator sessions")
         return session
         
     async def _connect_to_whisper(self, session: StreamSession) -> bool:
         """Connect to WhisperLive with correct protocol matching the actual WhisperLive implementation"""
+        logger.debug(f"Starting WhisperLive connection for session {session.session_id}")
+        
         for attempt in range(session.max_retries):
             try:
                 session.connection_retries = attempt + 1
@@ -299,20 +346,16 @@ class VoiceStreamOrchestrator:
                 # Create WebSocket URL
                 whisper_ws_url = f"ws://{self.whisper_host}:{self.whisper_port}"
                 logger.info(f"Attempt {attempt + 1}: Connecting to WhisperLive at: {whisper_ws_url}")
+                logger.debug(f"Session {session.session_id}: Creating WebSocket connection...")
                 
-                # Simple connection - no extra headers needed for WhisperLive
-                session.whisper_ws = await websockets.connect(
-                    whisper_ws_url,
-                    # Disable ping/pong - WhisperLive doesn't use it
-                    ping_interval=None,
-                    ping_timeout=None,
-                    open_timeout=10,
-                    close_timeout=5
-                )
+                # Simple connection - using the working pattern
+                session.whisper_ws = await websockets.connect(whisper_ws_url)
                 
-                logger.info(f"WebSocket connected to WhisperLive for session {session.session_id}")
+                logger.info(f"✅ WebSocket connected to WhisperLive for session {session.session_id}")
+                logger.debug(f"Session {session.session_id}: WebSocket state: {session.whisper_ws.state}")
                 
-                # Send WhisperLive configuration as first message (required per protocol)
+                # CRITICAL: Send WhisperLive configuration immediately as first message
+                # WhisperLive expects this exact format and will timeout if not received quickly
                 config_message = {
                     "uid": session.session_id,
                     "language": "en", 
@@ -327,38 +370,65 @@ class VoiceStreamOrchestrator:
                     "same_output_threshold": 10
                 }
                 
-                logger.info(f"Sending config to WhisperLive: {config_message}")
-                await session.whisper_ws.send(json.dumps(config_message))
+                logger.info(f"📤 Sending config to WhisperLive: {config_message}")
+                logger.debug(f"Session {session.session_id}: Config message JSON: {json.dumps(config_message)}")
                 
-                # WhisperLive starts processing immediately after config - no need to wait for SERVER_READY
+                # Send immediately without delay to avoid handshake timeout
+                await session.whisper_ws.send(json.dumps(config_message))
+                logger.info(f"✅ Configuration sent to WhisperLive successfully")
+                logger.debug(f"Session {session.session_id}: Config sent, WebSocket state: {session.whisper_ws.state}")
+                
+                # WhisperLive initializes the client immediately after receiving config
                 session.whisper_connected = True
                 logger.info(f"✅ Session {session.session_id}: WhisperLive connected and configured")
                 
-                # Start message handler
+                # Start message handler to process WhisperLive responses
+                logger.debug(f"Session {session.session_id}: Starting WhisperLive message handler task")
                 session.whisper_message_handler_task = asyncio.create_task(self._handle_whisper_messages(session))
+                logger.debug(f"Session {session.session_id}: Message handler task started")
                 
                 return True
                 
-            except websockets.exceptions.InvalidUpgrade as e:
+            except (websockets.exceptions.InvalidUpgrade, websockets.exceptions.InvalidHandshake) as e:
                 logger.error(f"❌ WebSocket handshake failed for session {session.session_id} (attempt {attempt + 1}): {e}")
+                logger.debug(f"Session {session.session_id}: Handshake failure details: {type(e).__name__}: {str(e)}")
                 if attempt == session.max_retries - 1:
-                    logger.error(f"❌ All attempts failed. Check if WhisperLive is running at ws://{self.whisper_host}:{self.whisper_port}")
+                    logger.error(f"❌ All handshake attempts failed. Check if WhisperLive is running correctly at ws://{self.whisper_host}:{self.whisper_port}")
                 else:
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                    sleep_time = 1 + attempt
+                    logger.debug(f"Session {session.session_id}: Sleeping {sleep_time}s before retry")
+                    await asyncio.sleep(sleep_time)  # Progressive backoff
                     
-            except ConnectionRefusedError as e:
+            except (ConnectionRefusedError, OSError) as e:
                 logger.error(f"❌ Connection refused for session {session.session_id} (attempt {attempt + 1}): {e}")
+                logger.debug(f"Session {session.session_id}: Connection refused details: {type(e).__name__}: {str(e)}")
                 if attempt == session.max_retries - 1:
                     logger.error(f"❌ WhisperLive not accessible at ws://{self.whisper_host}:{self.whisper_port}")
                 else:
-                    await asyncio.sleep(2 ** attempt)
+                    sleep_time = 2 + attempt
+                    logger.debug(f"Session {session.session_id}: Sleeping {sleep_time}s before retry")
+                    await asyncio.sleep(sleep_time)
+                    
+            except asyncio.TimeoutError as e:
+                logger.error(f"❌ Connection timeout for session {session.session_id} (attempt {attempt + 1}): {e}")
+                logger.debug(f"Session {session.session_id}: Timeout details: {type(e).__name__}: {str(e)}")
+                if attempt == session.max_retries - 1:
+                    logger.error(f"❌ All timeout attempts failed for WhisperLive at ws://{self.whisper_host}:{self.whisper_port}")
+                else:
+                    sleep_time = 1 + attempt
+                    logger.debug(f"Session {session.session_id}: Sleeping {sleep_time}s before retry")
+                    await asyncio.sleep(sleep_time)
                     
             except Exception as e:
                 logger.error(f"❌ Connection error for session {session.session_id} (attempt {attempt + 1}): {type(e).__name__}: {e}")
+                logger.debug(f"Session {session.session_id}: Exception details: {type(e).__name__}: {str(e)}")
+                logger.debug(f"Session {session.session_id}: Exception traceback:", exc_info=True)
                 if attempt == session.max_retries - 1:
                     logger.error(f"❌ Failed to connect after {session.max_retries} attempts")
                 else:
-                    await asyncio.sleep(2 ** attempt)
+                    sleep_time = 2 + attempt
+                    logger.debug(f"Session {session.session_id}: Sleeping {sleep_time}s before retry")
+                    await asyncio.sleep(sleep_time)
                     
         return False
         
@@ -412,47 +482,65 @@ class VoiceStreamOrchestrator:
         
     async def _handle_whisper_messages(self, session: StreamSession):
         """Handle incoming messages from WhisperLive with correct protocol"""
+        logger.debug(f"Session {session.session_id}: Starting WhisperLive message handler")
+        
         try:
             while session.whisper_ws and self._is_websocket_connected(session.whisper_ws):
                 try:
+                    logger.debug(f"Session {session.session_id}: Waiting for WhisperLive message...")
                     message = await asyncio.wait_for(
                         session.whisper_ws.recv(), 
                         timeout=30.0
                     )
+                    logger.debug(f"Session {session.session_id}: Received message from WhisperLive: {message[:100]}...")
                     
                     try:
                         data = json.loads(message)
+                        logger.debug(f"Session {session.session_id}: Parsed JSON message: {data}")
                         
                         # WhisperLive sends transcription data with "uid" and "segments"
                         if "uid" in data and data["uid"] == session.session_id:
                             if "segments" in data:
+                                logger.info(f"📝 Received transcript segments from WhisperLive: {data['segments']}")
+                                with open("/tmp/whisper_transcripts.log", "a") as f:
+                                    f.write(json.dumps(data['segments']) + "\n")
+                                logger.debug(f"Session {session.session_id}: Processing transcript segments")
                                 await self._process_transcript_segments(session, data["segments"])
                             elif "message" in data:
                                 # Handle status messages
+                                logger.debug(f"Session {session.session_id}: Processing status message: {data['message']}")
                                 if data["message"] == "DISCONNECT":
                                     logger.info(f"WhisperLive disconnected session {session.session_id}")
                                     break
-                                elif "status" in data:
-                                    # Handle WAIT, ERROR, WARNING status messages
-                                    logger.info(f"WhisperLive status for {session.session_id}: {data}")
+                                elif data["message"] == "SERVER_READY":
+                                    logger.info(f"WhisperLive server ready for session {session.session_id}")
+                                else:
+                                    logger.debug(f"Session {session.session_id}: Unknown message type: {data['message']}")
+                            elif "status" in data:
+                                # Handle WAIT, ERROR, WARNING status messages
+                                logger.info(f"WhisperLive status for {session.session_id}: {data}")
                         else:
-                            logger.debug(f"Unknown message from WhisperLive: {data}")
+                            logger.debug(f"Session {session.session_id}: Message for different session or unknown format: {data}")
                             
-                    except json.JSONDecodeError:
-                        logger.warning(f"Non-JSON message from WhisperLive: {message}")
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Session {session.session_id}: Non-JSON message from WhisperLive: {message}")
+                        logger.debug(f"Session {session.session_id}: JSON decode error: {e}")
                         
                 except websockets.exceptions.ConnectionClosed as e:
                     logger.info(f"WhisperLive connection closed normally for session {session.session_id}: {e}")
+                    logger.debug(f"Session {session.session_id}: Connection closed details: {type(e).__name__}: {str(e)}")
                     break
                 except asyncio.TimeoutError:
                     logger.debug(f"No message from WhisperLive for 30 seconds (session {session.session_id})")
                     # Check if connection is still alive
                     if not self._is_websocket_connected(session.whisper_ws):
+                        logger.debug(f"Session {session.session_id}: WhisperLive connection is no longer alive")
                         break
                     continue
                     
                 except Exception as e:
-                    logger.error(f"Error processing WhisperLive message: {e}")
+                    logger.error(f"Error processing WhisperLive message for session {session.session_id}: {e}")
+                    logger.debug(f"Session {session.session_id}: Message processing error details:", exc_info=True)
                     break
                     
         except websockets.exceptions.ConnectionClosed:
@@ -505,14 +593,54 @@ class VoiceStreamOrchestrator:
                 return False
                 
         try:
+            # DETAILED LOGGING FOR AUDIO DATA FORMAT DEBUGGING
             logger.info(f"📤 Sending {len(audio_data)} bytes of audio to WhisperLive for session {session_id}")
+            logger.debug(f"🔍 Audio data type: {type(audio_data)}")
+            # logger.debug(f"🔍 Audio data repr: {repr(audio_data)}")
+            logger.debug(f"🔍 Audio data length: {len(audio_data)}")
+            
+            if len(audio_data) >= 16:
+                # logger.debug(f"🔍 First 16 bytes (hex): {audio_data[:16].hex()}")
+                
+                # Try to interpret as Float32Array
+                import struct
+                try:
+                    first_samples = struct.unpack('<ffff', audio_data[:16])
+                    # logger.debug(f"🔍 First 4 samples as Float32: {first_samples}")
+                except struct.error as e:
+                    logger.debug(f"🔍 Cannot interpret as Float32: {e}")
+                
+                # Try to interpret as Int16Array
+                try:
+                    first_samples_int16 = struct.unpack('<hhhhhhhh', audio_data[:16])
+                    logger.debug(f"🔍 First 8 samples as Int16: {first_samples_int16}")
+                except struct.error as e:
+                    logger.debug(f"🔍 Cannot interpret as Int16: {e}")
+                # --- ADDED: Log audio stats for debugging ---
+                import numpy as np
+                audio_array = np.frombuffer(audio_data, dtype=np.float32)
+                logger.info(f"🔊 Audio stats: min={audio_array.min()}, max={audio_array.max()}, mean={audio_array.mean()}, std={audio_array.std()}")
+                # --- END ADDED ---            
+            # Check if audio_data is actually bytes vs string
+            if isinstance(audio_data, str):
+                logger.error(f"❌ CRITICAL: Audio data is a STRING, not bytes! This will cause the WhisperLive error!")
+                logger.error(f"❌ String content: {audio_data[:100]}...")
+                # Convert string to bytes if needed
+                logger.warning(f"⚠️ Converting string to bytes as emergency fix")
+                audio_data = audio_data.encode('utf-8')
+            elif isinstance(audio_data, bytes):
+                logger.debug(f"✅ Audio data is bytes type as expected")
+            else:
+                logger.error(f"❌ CRITICAL: Audio data is neither string nor bytes: {type(audio_data)}")
+                
             await session.whisper_ws.send(audio_data)
             session.update_activity()
             logger.info(f"✅ Successfully sent audio to WhisperLive for session {session_id}")
             
             # Emit plugin events for audio data
             import numpy as np
-            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            # Audio data is now Float32Array format (not int16)
+            audio_array = np.frombuffer(audio_data, dtype=np.float32)
             await self.plugin_manager.emit_event("audio_data", {
                 "session_id": session_id,
                 "audio": audio_array.tolist(),
@@ -527,6 +655,7 @@ class VoiceStreamOrchestrator:
             return False
         except Exception as e:
             logger.error(f"❌ Failed to send audio to WhisperLive: {e}")
+            logger.debug(f"❌ Exception details:", exc_info=True)
             return False
 
     async def _process_transcript_segments(self, session: StreamSession, segments):
@@ -1005,14 +1134,32 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         while True:
             # Correct pattern for FastAPI WebSocket - use receive()
             message = await websocket.receive()
-            logger.info(f"📥 Received frontend message: {message}")
+            # logger.info(f"📥 Received frontend message: {message}")
             
             try:
                 if message["type"] == "websocket.receive":
                     if "bytes" in message:
                         # Audio data - forward to WhisperLive
-                        logger.info(f"🎤 Received {len(message['bytes'])} bytes of audio data")
-                        success = await orchestrator.send_audio_to_whisper(session_id, message["bytes"])
+                        audio_bytes = message["bytes"]
+                        logger.info(f"🎤 Received {len(audio_bytes)} bytes of audio data from frontend")
+                        
+                        # DETAILED LOGGING FOR AUDIO DATA FORMAT DEBUGGING
+                        logger.debug(f"🔍 WebSocket message type: {message['type']}")
+                        logger.debug(f"🔍 WebSocket message keys: {list(message.keys())}")
+                        # logger.debug(f"🔍 Raw audio_bytes type: {type(audio_bytes)}")
+                        # logger.debug(f"🔍 Raw audio_bytes repr: {repr(audio_bytes)}")
+                        
+                        # Log audio data format for debugging
+                        if len(audio_bytes) >= 4:
+                            # Check if it's float32 by looking at the first few bytes
+                            import struct
+                            try:
+                                first_sample = struct.unpack('<f', audio_bytes[:4])[0]
+                                # logger.debug(f"📊 Audio data format check - first sample: {first_sample}")
+                            except:
+                                logger.debug(f"📊 Audio data format - raw bytes: {audio_bytes[:16].hex()}")
+                        
+                        success = await orchestrator.send_audio_to_whisper(session_id, audio_bytes)
                         if not success:
                             logger.error(f"❌ Failed to send audio to WhisperLive")
                          
@@ -1050,14 +1197,19 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 @app.websocket("/ws/voice")
 async def websocket_voice_endpoint(websocket: WebSocket):
     """Ultra-fast WebSocket endpoint for voice processing with event bus"""
+    logger.debug(f"New WebSocket connection attempt to /ws/voice")
     await websocket.accept()
     session_id = f"voice_{int(time.time() * 1000)}"
     logger.info(f"Ultra-fast WebSocket connected for session {session_id}")
+    logger.debug(f"Session {session_id}: WebSocket accepted, client info: {websocket.client}")
     
     try:
         # Create session with event bus integration
+        logger.debug(f"Session {session_id}: Creating orchestrator session...")
         session = await orchestrator.create_session(session_id)
+        logger.debug(f"Session {session_id}: Orchestrator session created successfully")
         session.frontend_ws = websocket
+        logger.debug(f"Session {session_id}: Frontend WebSocket assigned to session")
         
         # Register ultra-fast processing handler
         async def handle_ultra_fast_process(event_data):
@@ -1094,7 +1246,19 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                 if message["type"] == "websocket.receive":
                     if "bytes" in message:
                         # Audio data - forward to WhisperLive
-                        await orchestrator.send_audio_to_whisper(session_id, message["bytes"])
+                        audio_bytes = message["bytes"]
+                        logger.info(f"🎤 [Ultra-fast] Received {len(audio_bytes)} bytes of audio data from frontend")
+                        
+                        # DETAILED LOGGING FOR AUDIO DATA FORMAT DEBUGGING
+                        logger.debug(f"🔍 WebSocket message type: {message['type']}")
+                        logger.debug(f"🔍 WebSocket message keys: {list(message.keys())}")
+                        # logger.debug(f"🔍 Raw audio_bytes type: {type(audio_bytes)}")
+                        # logger.debug(f"🔍 Raw audio_bytes repr: {repr(audio_bytes)}")
+                        
+                        if len(audio_bytes) >= 16:
+                            logger.debug(f"🔍 First 16 bytes (hex): {audio_bytes[:16].hex()}")
+                        
+                        await orchestrator.send_audio_to_whisper(session_id, audio_bytes)
                         
                     elif "text" in message:
                         data = json.loads(message["text"])
@@ -1124,17 +1288,21 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                 
     except WebSocketDisconnect:
         logger.info(f"Ultra-fast WebSocket disconnected for session {session_id}")
+        logger.debug(f"Session {session_id}: WebSocket disconnect details")
     except Exception as e:
         logger.error(f"Ultra-fast WebSocket error for session {session_id}: {e}")
+        logger.debug(f"Session {session_id}: WebSocket exception details:", exc_info=True)
     finally:
+        logger.debug(f"Session {session_id}: Cleaning up in WebSocket finally block")
         if session_id in orchestrator.sessions:
             # Clean up event handlers
             session = orchestrator.sessions[session_id]
             # Find and remove the handler by creating a closure
             orchestrator.sessions[session_id].frontend_ws = None
+            logger.debug(f"Session {session_id}: Frontend WebSocket cleared")
+        logger.debug(f"Session {session_id}: Calling cleanup_session")
         await orchestrator.cleanup_session(session_id)
-
-        await orchestrator.cleanup_session(session_id)
+        logger.debug(f"Session {session_id}: Cleanup completed")
 
 # Health check endpoint
 @app.get("/health")

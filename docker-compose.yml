@@ -32,7 +32,7 @@ services:
       - MIN_WORD_COUNT=${MIN_WORD_COUNT:-3}
       
       # WhisperLive Settings
-      - NO_SPEECH_THRESHOLD=${NO_SPEECH_THRESHOLD:-0.45}
+      - NO_SPEECH_THRESHOLD=${NO_SPEECH_THRESHOLD:-0.1}
       - VAD_ENABLED=${VAD_ENABLED:-true}
       
       # Timeouts
@@ -82,7 +82,7 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/health"]
+      test: ["CMD", "netstat", "-an", "|", "grep", ":9090.*LISTEN"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -124,7 +124,8 @@ services:
       - "3001:3001"
     environment:
       # Simplified environment - only needs orchestrator
-      - NEXT_PUBLIC_ORCHESTRATOR_WS_URL=${NEXT_PUBLIC_ORCHESTRATOR_WS_URL:-ws://localhost:8000}
+      - NEXT_PUBLIC_USE_NEW_VOICE_BUTTON=true
+      - NEXT_PUBLIC_ORCHESTRATOR_WS_URL=${NEXT_PUBLIC_ORCHESTRATOR_WS_URL:-ws://localhost:8000/ws/{session_id}}
       - ORCHESTRATOR_HTTP_URL=${ORCHESTRATOR_HTTP_URL:-http://orchestrator:8000}
       # No direct WhisperLive connection needed
       - NODE_ENV=${NODE_ENV:-production}

@@ -86,9 +86,20 @@ export class VoiceWebSocket {
               const incompleteSegments = message.segments.filter((seg: any) => !seg.completed);
               const transcript = incompleteSegments.map((seg: any) => seg.text || '').join(' ');
               if (transcript.trim()) {
-                this.onTranscriptCallback?.(transcript);
-              }
-            }
+                       this.onTranscriptCallback?.(transcript);
+               }
+             }
+           }
+           
+           // Handle live transcript updates from orchestrator
+           if (message.type === 'live_transcript') {
+             this.onTranscriptCallback?.(message.text);
+           }
+           
+           // Handle completed sentences
+           if (message.type === 'sentence_complete') {
+             this.onSentenceCallback?.(message.text);
+           }
           } catch (e) {
             console.warn('Non-JSON message:', event.data);
           }
