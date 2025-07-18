@@ -24,155 +24,20 @@ export function useAutoInterrupt() {
   const shouldMonitorForInterruption = !isRecording && (isProcessing || isPlaying)
   
   useEffect(() => {
-    if (!shouldMonitorForInterruption || !voiceWebSocket) {
-      // Clean up if we should stop monitoring
-      if (voiceActivityTimeoutRef.current) {
-        clearTimeout(voiceActivityTimeoutRef.current)
-      }
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current)
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close()
-        audioContextRef.current = null
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop())
-        streamRef.current = null
-      }
-      analyserRef.current = null
-      return
+    // With continuous streaming architecture, interrupt detection is now handled
+    // server-side by the InterruptPlugin based on the continuous audio stream
+    // This provides more accurate and faster interrupt detection
+    
+    if (shouldMonitorForInterruption && voiceWebSocket) {
+      console.log('🎯 Auto-interrupt is now handled server-side via continuous audio stream')
+      
+      // The VoiceButton component now keeps the audio processor running in monitoring mode
+      // so that the server can detect voice activity during TTS and trigger interrupts
     }
     
-    // Don't start if already running
-    if (analyserRef.current && audioContextRef.current) {
-      return
-    }
-    
-    console.log('🎯 Starting lightweight automatic interruption monitoring')
-    
-    // Use Web Audio API AnalyserNode for lightweight voice detection
-    const startVoiceActivityDetection = async () => {
-      try {
-        // Get microphone stream
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            sampleRate: 16000,
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
-        })
-        
-        streamRef.current = stream
-        
-        // Create audio context and analyser
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
-        const analyser = audioContext.createAnalyser()
-        const source = audioContext.createMediaStreamSource(stream)
-        
-        analyser.fftSize = 256
-        analyser.smoothingTimeConstant = 0.8
-        source.connect(analyser)
-        
-        audioContextRef.current = audioContext
-        analyserRef.current = analyser
-        
-        // Start voice activity monitoring
-        const dataArray = new Uint8Array(analyser.frequencyBinCount)
-        
-        const checkVoiceActivity = () => {
-          if (!analyserRef.current || !shouldMonitorForInterruption) {
-            return
-          }
-          
-          analyser.getByteFrequencyData(dataArray)
-          
-          // Calculate average volume
-          const volume = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length
-          
-          // Simple voice activity detection threshold
-          const voiceThreshold = 20
-          
-          if (volume > voiceThreshold) {
-            // Clear any existing timeout
-            if (voiceActivityTimeoutRef.current) {
-              clearTimeout(voiceActivityTimeoutRef.current)
-            }
-            
-            // Debounce voice activity
-            voiceActivityTimeoutRef.current = setTimeout(() => {
-              const now = Date.now()
-              const timeSinceLastInterrupt = now - lastInterruptTimeRef.current
-              
-              // Only interrupt if enough time has passed since last interrupt
-              if (timeSinceLastInterrupt > 2000) { // Increased to 2 seconds to prevent loops
-                console.log('🛑 Auto-interrupting due to voice activity (lightweight detection)')
-                voiceWebSocket.interrupt()
-                lastInterruptTimeRef.current = now
-              }
-            }, 200) // Increased debounce to 200ms
-          }
-          
-          // Continue monitoring
-          animationFrameRef.current = requestAnimationFrame(checkVoiceActivity)
-        }
-        
-        // Start monitoring
-        checkVoiceActivity()
-        
-      } catch (error) {
-        console.error('Failed to start voice activity detection:', error)
-      }
-    }
-    
-    startVoiceActivityDetection()
-    
+    // No cleanup needed since audio monitoring is handled by AudioProcessor
     return () => {
-      console.log('🎯 Stopping lightweight automatic interruption monitoring')
-      
-      // Clean up timeouts
-      if (voiceActivityTimeoutRef.current) {
-        clearTimeout(voiceActivityTimeoutRef.current)
-      }
-      
-      // Clean up animation frame
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current)
-      }
-      
-      // Clean up audio context
-      if (audioContextRef.current) {
-        audioContextRef.current.close()
-        audioContextRef.current = null
-      }
-      
-      // Clean up stream
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop())
-        streamRef.current = null
-      }
-      
-      analyserRef.current = null
+      // No-op: cleanup is handled by AudioProcessor lifecycle
     }
   }, [shouldMonitorForInterruption, voiceWebSocket])
-  
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      if (voiceActivityTimeoutRef.current) {
-        clearTimeout(voiceActivityTimeoutRef.current)
-      }
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current)
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close()
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop())
-      }
-    }
-  }, [])
 }
