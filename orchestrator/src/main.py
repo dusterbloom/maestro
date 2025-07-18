@@ -711,16 +711,31 @@ class VoiceStreamOrchestrator:
         session.update_activity()
         logger.info(f"🎯 Processing transcript segments for session {session.session_id}: {segments}")
         
-        # Find completed segments
+        # Find completed segments with event-driven deduplication
         completed_texts = []
         current_transcript_parts = []
+        current_time = time.time()
         
         for segment in segments:
             if segment.get("completed") and segment.get("text"):
                 text = segment["text"].strip()
-                if text and text not in [s.get("text", "") for s in session.conversation_history[-5:]]:
-                    completed_texts.append(text)
-                    logger.info(f"✅ Completed text found: {text}")
+                if text:
+                    # Event-driven deduplication - check if already processed
+                    if not session.segment_cache.has_segment(text, current_time):
+                        # Add to cache immediately to prevent duplicates
+                        session.segment_cache.add_segment(text, current_time)
+                        completed_texts.append(text)
+                        logger.info(f"✅ New completed text found: {text}")
+                        
+                        # Emit segment processed event via event bus (fire-and-forget)
+                        await session.event_bus.emit("segment_processed", {
+                            "session_id": session.session_id,
+                            "text": text,
+                            "segment_hash": session.segment_cache.get_segment_hash(text, current_time),
+                            "timestamp": current_time
+                        })
+                    else:
+                        logger.debug(f"⚠️ Duplicate segment ignored: {text}")
             else:
                 # Incomplete segment for live transcript display
                 if segment.get("text"):
@@ -741,7 +756,7 @@ class VoiceStreamOrchestrator:
             await self.plugin_manager.emit_event("live_transcript", {
                 "session_id": session.session_id,
                 "text": current_transcript,
-                "timestamp": time.time()
+                "timestamp": current_time
             })
         
         # Process completed sentences
@@ -760,7 +775,7 @@ class VoiceStreamOrchestrator:
                 await self.plugin_manager.emit_event("transcription_complete", {
                     "session_id": session.session_id,
                     "text": completed_text,
-                    "timestamp": time.time(),
+                    "timestamp": current_time,
                     "user_id": session.session_id  # Use session_id as user_id for now
                 })
                 
