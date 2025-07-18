@@ -23,6 +23,9 @@ class InterruptPlugin(BasePlugin):
         # Session-specific interrupt state
         self.session_states: Dict[str, Dict[str, Any]] = {}
         
+        # Reference to orchestrator for direct interrupt calls
+        self.orchestrator = None
+        
     async def initialize(self):
         """Initialize the interrupt plugin"""
         logger.info("🛑 InterruptPlugin initialized - ready for voice activity detection")
