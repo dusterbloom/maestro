@@ -321,7 +321,7 @@ class VoiceStreamOrchestrator:
                 logger.info("Speaker plugin registered")
             
             # Register interrupt plugin (always enabled for voice activity detection)
-            from .plugins.base_plugin import PluginConfig
+            from plugins.base_plugin import PluginConfig
             interrupt_config = PluginConfig(
                 enabled=True,
                 priority=0,  # Highest priority for interrupt detection
