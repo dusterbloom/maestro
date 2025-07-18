@@ -143,6 +143,21 @@ class SegmentCache:
         content = text.strip().lower()
         return hashlib.md5(content.encode()).hexdigest()
     
+    def is_duplicate(self, text: str, timestamp: float) -> bool:
+        """Check if segment is duplicate using content-based hashing"""
+        segment_hash = self.get_segment_hash(text, timestamp)
+        
+        # Clean expired entries
+        self._cleanup_expired()
+        
+        if segment_hash in self.cache:
+            logger.debug(f"Duplicate segment detected: {text[:50]}...")
+            return True
+        
+        # Add to cache
+        self.cache[segment_hash] = timestamp
+        return False
+    
     def has_segment(self, text: str, timestamp: float) -> bool:
         """Check if segment was already processed"""
         self._cleanup_expired()
