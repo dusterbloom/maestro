@@ -327,17 +327,20 @@ class VoiceStreamOrchestrator:
                 logger.info("Speaker plugin registered")
             
             # Register interrupt plugin (always enabled for voice activity detection)
-            from plugins.base_plugin import PluginConfig
-            interrupt_config = PluginConfig(
-                enabled=True,
-                priority=0,  # Highest priority for interrupt detection
-                max_workers=config.PLUGIN_MAX_WORKERS,
-                timeout=config.PLUGIN_TIMEOUT
-            )
-            interrupt_plugin = InterruptPlugin(interrupt_config)
-            interrupt_plugin.orchestrator = self  # Pass orchestrator reference
-            self.plugin_manager.register_plugin(interrupt_plugin)
-            logger.info("Interrupt plugin registered")
+            if INTERRUPT_PLUGIN_AVAILABLE:
+                from plugins.base_plugin import PluginConfig
+                interrupt_config = PluginConfig(
+                    enabled=True,
+                    priority=0,  # Highest priority for interrupt detection
+                    max_workers=config.PLUGIN_MAX_WORKERS,
+                    timeout=config.PLUGIN_TIMEOUT
+                )
+                interrupt_plugin = InterruptPlugin(interrupt_config)
+                interrupt_plugin.orchestrator = self  # Pass orchestrator reference
+                self.plugin_manager.register_plugin(interrupt_plugin)
+                logger.info("Interrupt plugin registered")
+            else:
+                logger.warning("InterruptPlugin not available - automatic interruption disabled")
             
             
             # Start plugin manager
