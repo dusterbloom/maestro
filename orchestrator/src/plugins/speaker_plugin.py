@@ -266,7 +266,7 @@ class SpeakerPlugin(BasePlugin):
     
     async def _emit_speaker_identified(self, user_id: str, speaker_id: str, confidence: float) -> None:
         """Emit speaker identified event."""
-        from .base_plugin import Event
+        from plugins.base_plugin import Event
         
         # This would be called from the plugin manager
         # For now, we'll log it
