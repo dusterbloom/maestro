@@ -390,6 +390,24 @@ class VoiceStreamOrchestrator:
             raise ConnectionError(f"Failed to connect to WhisperLive after {session.max_retries} attempts")
             
         logger.debug(f"WhisperLive connection established for session {session_id}")
+        
+        # Connect InterruptPlugin to session's event bus for real-time interrupt detection
+        interrupt_plugin = None
+        for plugin in self.plugin_manager.plugins.values():
+            if isinstance(plugin, InterruptPlugin):
+                interrupt_plugin = plugin
+                break
+        
+        if interrupt_plugin:
+            # Register InterruptPlugin event handlers with session's event bus
+            session.event_bus.on("audio_monitor", interrupt_plugin._handle_audio_monitor)
+            session.event_bus.on("voice_during_tts", interrupt_plugin._handle_voice_during_tts)
+            session.event_bus.on("interrupted", interrupt_plugin._handle_interrupted)
+            session.event_bus.on("processing_complete", interrupt_plugin._handle_processing_complete)
+            logger.info(f"🛑 InterruptPlugin connected to session {session_id} event bus")
+        else:
+            logger.warning(f"⚠️ InterruptPlugin not found for session {session_id}")
+        
         self.sessions[session_id] = session
         logger.debug(f"Session {session_id} added to orchestrator sessions")
         return session
