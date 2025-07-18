@@ -139,10 +139,8 @@ class SegmentCache:
         self.ttl_seconds = ttl_seconds
     
     def get_segment_hash(self, text: str, timestamp: float) -> str:
-        """Generate hash for segment based on text and time window"""
-        # Create time window to group similar segments
-        time_window = int(timestamp / 5)  # 5-second windows
-        content = f"{text.strip().lower()}_{time_window}"
+        """Generate hash for segment based on text content only"""
+        content = text.strip().lower()
         return hashlib.md5(content.encode()).hexdigest()
     
     def has_segment(self, text: str, timestamp: float) -> bool:
