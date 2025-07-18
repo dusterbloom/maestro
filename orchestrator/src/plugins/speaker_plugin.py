@@ -6,7 +6,7 @@ import numpy as np
 from typing import Any, Dict, List, Optional, Tuple
 import time
 import json
-from .base_plugin import BasePlugin, Event, PluginConfig
+from plugins.base_plugin import BasePlugin, Event, PluginConfig
 
 logger = logging.getLogger(__name__)
 
