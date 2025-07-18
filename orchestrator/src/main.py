@@ -1200,12 +1200,26 @@ class VoiceStreamOrchestrator:
                 pass # Expected
 
         # 3. Reset processing state
+        was_processing = session.is_processing
+        was_tts_active = session.tts_active
         session.is_processing = False
         session.tts_active = False
         
         # 4. Clear the TTS queue to prevent pending sentences from playing
         session.tts_queue.clear()
         session.tts_sequence_number = 0
+        
+        # 5. Clear segment cache to prevent duplicate processing of interrupted text
+        session.segment_cache.clear()
+        
+        # 6. Emit interrupt event via session event bus (fire-and-forget)
+        current_time = time.time()
+        await session.event_bus.emit("interrupt_triggered", {
+            "session_id": session_id,
+            "was_processing": was_processing,
+            "was_tts_active": was_tts_active,
+            "timestamp": current_time
+        })
         
         # 5. Send a reset message to WhisperLive to clear its internal buffer
         if session.whisper_ws and self._is_websocket_connected(session.whisper_ws):
