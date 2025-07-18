@@ -1221,7 +1221,7 @@ class VoiceStreamOrchestrator:
             "timestamp": current_time
         })
         
-        # 5. Send a reset message to WhisperLive to clear its internal buffer
+        # 7. Send a reset message to WhisperLive to clear its internal buffer
         if session.whisper_ws and self._is_websocket_connected(session.whisper_ws):
             try:
                 # This message tells WhisperLive to reset the client's audio buffer
@@ -1230,7 +1230,15 @@ class VoiceStreamOrchestrator:
             except Exception as e:
                 logger.error(f"Session {session_id}: Failed to send reset signal to WhisperLive: {e}")
 
-        # 6. Notify the frontend
+        # 8. Emit plugin events for interrupt
+        await self.plugin_manager.emit_event("interrupted", {
+            "session_id": session_id,
+            "was_processing": was_processing,
+            "was_tts_active": was_tts_active,
+            "timestamp": current_time
+        })
+
+        # 9. Notify the frontend
         await self._send_to_frontend(session, {
             "type": "interrupted"
         })
