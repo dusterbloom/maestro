@@ -505,6 +505,11 @@ class VoiceStreamOrchestrator:
                                 with open("/tmp/whisper_transcripts.log", "a") as f:
                                     f.write(json.dumps(data['segments']) + "\n")
                                 logger.debug(f"Session {session.session_id}: Processing transcript segments")
+                                if session.frontend_ws:                                                       
+                                  await session.frontend_ws.send_text(json.dumps({                          
+                                    "type": "segments",                              
+                                    "segments": data["segments"]                     
+                                    }))  
                                 await self._process_transcript_segments(session, data["segments"])
                             elif "message" in data:
                                 # Handle status messages

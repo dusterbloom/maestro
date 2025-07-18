@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import WorkingHandsFreeInterface from '@/components/WorkingHandsFreeInterface';
 
-export default function HomePage() {
+export default function TestTranscriptFlowPage() {
   const [showDebug, setShowDebug] = useState(false);
 
   return (

@@ -44,8 +44,8 @@ class Config:
     TTS_TIMEOUT: float = float(os.getenv("TTS_TIMEOUT", "10.0"))
     
     # WhisperLive Settings
-    NO_SPEECH_THRESHOLD: float = float(os.getenv("NO_SPEECH_THRESHOLD", "0.1"))
-    VAD_ENABLED: bool = os.getenv("VAD_ENABLED", "false").lower() == "false"
+    NO_SPEECH_THRESHOLD: float = float(os.getenv("NO_SPEECH_THRESHOLD", "0.45"))
+    VAD_ENABLED: bool = os.getenv("VAD_ENABLED", "true").lower() == "true"
     
     # Plugin Configuration
     MEMORY_PLUGIN_ENABLED: bool = os.getenv("MEMORY_PLUGIN_ENABLED", "true").lower() == "true"

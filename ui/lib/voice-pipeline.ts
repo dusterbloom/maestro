@@ -42,27 +42,20 @@ export class VoicePipeline extends EventEmitter {
       }
     });
 
-    // Create audio context for raw PCM processing (matching WhisperLive Chrome extension)
+    // Create audio context for raw PCM processing
     this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
     const source = this.audioContext.createMediaStreamSource(this.audioStream);
     
-    // Use ScriptProcessorNode for raw audio access (same as WhisperLive Chrome extension)
+    // Use ScriptProcessorNode for raw audio access
     const processor = this.audioContext.createScriptProcessor(4096, 1, 1);
     processor.onaudioprocess = (event) => {
       if (this.isRecording && this.ws?.readyState === WebSocket.OPEN) {
         const inputData = event.inputBuffer.getChannelData(0);
-        
-        // Resample to 16kHz if needed (same as WhisperLive extension)
         const audioData16kHz = this.resampleTo16kHZ(inputData, this.audioContext!.sampleRate);
         
-        // Send Float32Array data exactly like WhisperLive Chrome extension
-        // WhisperLive expects raw Float32Array data directly
-        console.log(`🎤 Sending ${audioData16kHz.length} float32 samples (${audioData16kHz.buffer.byteLength} bytes) to orchestrator`);
+        console.log(`🎤 Sending ${audioData16kHz.length} float32 samples to orchestrator`);
         
-        // Ensure buffer is properly aligned (length must be multiple of 4 for float32)
         if (audioData16kHz.buffer.byteLength % 4 !== 0) {
-          console.warn(`⚠️ Buffer size ${audioData16kHz.buffer.byteLength} is not aligned to 4-byte boundary`);
-          // Create aligned buffer
           const alignedLength = Math.floor(audioData16kHz.buffer.byteLength / 4) * 4;
           const alignedBuffer = audioData16kHz.buffer.slice(0, alignedLength);
           this.ws.send(alignedBuffer);
@@ -72,36 +65,24 @@ export class VoicePipeline extends EventEmitter {
       }
     };
     
-    // Connect audio nodes (same as WhisperLive extension)
     source.connect(processor);
     processor.connect(this.audioContext.destination);
-    
-    this.audioRecorder = null; // Not using MediaRecorder
   }
 
-  // Note: Removed PCM conversion - WhisperLive expects Float32Array directly
-
-  // Resample function from WhisperLive Chrome extension
   private resampleTo16kHZ(audioData: Float32Array, origSampleRate: number = 44100): Float32Array {
     const targetSampleRate = 16000;
     
-    // If already 16kHz, return as-is
     if (origSampleRate === targetSampleRate) {
       return audioData;
     }
     
-    // Calculate the desired length of the resampled data
     const targetLength = Math.round(audioData.length * (targetSampleRate / origSampleRate));
-    
-    // Create a new Float32Array for the resampled data
     const resampledData = new Float32Array(targetLength);
     
-    // Calculate the spring factor and initialize the first and last values
     const springFactor = (audioData.length - 1) / (targetLength - 1);
     resampledData[0] = audioData[0];
     resampledData[targetLength - 1] = audioData[audioData.length - 1];
     
-    // Resample the audio data
     for (let i = 1; i < targetLength - 1; i++) {
       const index = i * springFactor;
       const leftIndex = Math.floor(index);
@@ -111,28 +92,6 @@ export class VoicePipeline extends EventEmitter {
     }
     
     return resampledData;
-  }
-
-  // Note: Removed convertWebMToPCM - using direct Float32Array streaming instead
-
-  private resampleAudio(data: Float32Array, fromRate: number, toRate: number): Float32Array {
-    if (fromRate === toRate) return data;
-    
-    const ratio = fromRate / toRate;
-    const outputLength = Math.floor(data.length / ratio);
-    const output = new Float32Array(outputLength);
-    
-    for (let i = 0; i < outputLength; i++) {
-      const sourceIndex = i * ratio;
-      const sourceIndexFloor = Math.floor(sourceIndex);
-      const sourceIndexCeil = Math.min(sourceIndexFloor + 1, data.length - 1);
-      const fraction = sourceIndex - sourceIndexFloor;
-      
-      // Linear interpolation
-      output[i] = data[sourceIndexFloor] * (1 - fraction) + data[sourceIndexCeil] * fraction;
-    }
-    
-    return output;
   }
 
   private async connectToOrchestrator(): Promise<void> {
@@ -182,6 +141,8 @@ export class VoicePipeline extends EventEmitter {
   }
 
   private handleOrchestratorMessage(message: any): void {
+    console.log('📨 Received message from orchestrator:', message);
+    
     switch (message.type) {
       case 'ready':
         if (message.mode === 'ultra_fast') {
@@ -191,14 +152,28 @@ export class VoicePipeline extends EventEmitter {
         break;
 
       case 'live_transcript':
-        this.emit('transcript', { text: message.text, isFinal: false });
+        // Handle live transcript updates from backend
+        console.log('📝 Live transcript received:', message.text);
+        useVoiceStore.getState().setTranscript(message.text);
+        break;
+
+      case 'segments':
+        // Handle segment updates for debugging
+        console.log('📊 Segments received:', message.segments);
         break;
 
       case 'processing_started':
-        this.emit('processing', { started: true, text: message.text });
+        console.log('🔄 Processing started');
+        useVoiceStore.getState().setProcessing(true);
+        break;
+
+      case 'processing_complete':
+        console.log('✅ Processing complete');
+        useVoiceStore.getState().setProcessing(false);
         break;
 
       case 'sentence_audio':
+        console.log('🔊 Audio received for sequence:', message.sequence);
         this.emit('audio', { 
           sequence: message.sequence,
           text: message.text,
@@ -207,50 +182,25 @@ export class VoicePipeline extends EventEmitter {
         });
         break;
 
-      case 'processing_complete':
-        this.emit('processing', { started: false });
-        break;
-
       case 'interrupted':
-        this.emit('interrupted');
+        console.log('🛑 Interrupted');
+        useVoiceStore.getState().setProcessing(false);
+        useVoiceStore.getState().setPlaying(false);
         break;
 
       case 'error':
-        this.emit('error', { message: message.message });
+        console.error('❌ Error from orchestrator:', message.message);
+        useVoiceStore.getState().setError(message.message);
         break;
+
+      default:
+        console.log('🤷 Unknown message type:', message.type, message);
     }
   }
 
   private setupStateSync(): void {
-    this.on('connected', () => {
-      useVoiceStore.getState().setConnected(true);
-      useVoiceStore.getState().setError(null);
-    });
-
-    this.on('disconnected', () => {
-      useVoiceStore.getState().setConnected(false);
-    });
-
-    this.on('transcript', (data) => {
-      useVoiceStore.getState().setTranscript(data.text);
-    });
-
-    this.on('processing', (data) => {
-      useVoiceStore.getState().setProcessing(data.started);
-    });
-
-    this.on('audio', async (data) => {
-      await this.playAudioSequentially(data);
-    });
-
-    this.on('error', (data) => {
-      useVoiceStore.getState().setError(data.message);
-    });
-
-    this.on('interrupted', () => {
-      useVoiceStore.getState().setProcessing(false);
-      useVoiceStore.getState().setPlaying(false);
-    });
+    // Direct state updates from message handler
+    // No need for additional event listeners since we handle directly
   }
 
   async startRecording(): Promise<void> {
@@ -260,7 +210,7 @@ export class VoicePipeline extends EventEmitter {
 
     this.isRecording = true;
     useVoiceStore.getState().setRecording(true);
-    this.emit('recording_started');
+    console.log('🎤 Recording started');
   }
 
   stopRecording(): void {
@@ -273,13 +223,13 @@ export class VoicePipeline extends EventEmitter {
     }
     
     useVoiceStore.getState().setRecording(false);
-    this.emit('recording_stopped');
+    console.log('🛑 Recording stopped');
   }
 
   interrupt(): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'interrupt' }));
-      this.emit('interrupt_sent');
+      console.log('⚡ Interrupt sent');
     }
   }
 
@@ -296,6 +246,7 @@ export class VoicePipeline extends EventEmitter {
     try {
       useVoiceStore.getState().setPlaying(true);
 
+      // Convert base64 audio data to blob
       const audioData = atob(data.audioData);
       const arrayBuffer = new ArrayBuffer(audioData.length);
       const uint8Array = new Uint8Array(arrayBuffer);
@@ -314,6 +265,7 @@ export class VoicePipeline extends EventEmitter {
       };
 
       audio.onerror = (error) => {
+        console.error('Error playing audio:', error);
         useVoiceStore.getState().setPlaying(false);
         URL.revokeObjectURL(audioUrl);
       };
@@ -321,12 +273,13 @@ export class VoicePipeline extends EventEmitter {
       await audio.play();
       
     } catch (error) {
+      console.error('Error in audio playback:', error);
       useVoiceStore.getState().setPlaying(false);
     }
   }
 
   async cleanup(): Promise<void> {
-    this.removeAllListeners();
+    console.log('🧹 Cleaning up voice pipeline');
     
     if (this.audioRecorder && this.isRecording) {
       this.audioRecorder.stop();
