@@ -46,21 +46,28 @@ export function VoiceButton() {
     }
     
     if (isRecording) {
-      // Stop recording
+      // Stop recording but keep processing for interrupt detection
       console.log('🛑 Stopping recording...')
       setIsRecording(false)
       setAudioLevel(0)
       
-      // Stop audio processing first to prevent more data from being sent
-      if (audioProcessor) {
-        audioProcessor.stopProcessing()
-        console.log('🎤 Audio processing stopped')
-      }
-      
-      // Then signal end of audio to WebSocket
+      // Signal end of audio to WebSocket but keep audio processor running for interrupt detection
       if (voiceWebSocket) {
         voiceWebSocket.endAudio()
         console.log('📡 End audio signal sent')
+      }
+      
+      // Switch audio processor to monitoring mode (continuous streaming for interrupt detection)
+      if (audioProcessor) {
+        audioProcessor.startProcessing((audioData) => {
+          // Only send audio for monitoring, not for STT
+          voiceWebSocket.sendAudio(audioData)
+          
+          // Update audio level for visual feedback
+          const level = audioProcessor.getAudioLevel(audioData)
+          setAudioLevel(level * 0.5) // Reduced level for monitoring mode
+        })
+        console.log('🎤 Audio processing switched to monitoring mode')
       }
     } else {
       // Start recording
