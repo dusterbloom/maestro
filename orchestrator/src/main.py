@@ -851,6 +851,12 @@ class VoiceStreamOrchestrator:
                 session.last_interrupted_text = None  # Clear after ignoring once
                 continue
 
+            # CRITICAL: Block transcript processing during TTS to prevent feedback loops
+            if session.tts_active:
+                logger.info(f"🔇 Session {session.session_id}: Blocking transcript processing during TTS: {completed_text}")
+                logger.info(f"🔇 TTS is active - user speech will be processed only if interrupt is triggered")
+                continue
+
             if self._is_sentence_complete(completed_text):
                 session.stt_end_time = time.time()
                 logger.info(f"Session {session.session_id}: Processing complete sentence: {completed_text}")
