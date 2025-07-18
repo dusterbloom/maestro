@@ -127,14 +127,14 @@ class InterruptPlugin(BasePlugin):
         
         logger.info(f"🛑 Triggering interrupt for session {session_id} (audio_level: {audio_level})")
         
-        # Emit interrupt request event through session event bus
-        # Note: The session event bus connection will be handled by the orchestrator
-        await self.emit_event("interrupt_requested", {
-            "session_id": session_id,
-            "audio_level": audio_level,
-            "timestamp": timestamp,
-            "interrupt_count": session_state["interrupt_count"]
-        })
+        # Directly call orchestrator interrupt method for ultra-low latency
+        if self.orchestrator:
+            try:
+                await self.orchestrator.interrupt_session(session_id)
+            except Exception as e:
+                logger.error(f"Error triggering interrupt: {e}")
+        else:
+            logger.warning("No orchestrator reference available for interrupt")
         
         # Reset voice activity tracking
         session_state["voice_activity_start"] = None
