@@ -806,10 +806,8 @@ class VoiceStreamOrchestrator:
             if segment.get("completed") and segment.get("text"):
                 text = segment["text"].strip()
                 if text:
-                    # Event-driven deduplication - check if already processed
-                    if not session.segment_cache.has_segment(text, current_time):
-                        # Add to cache immediately to prevent duplicates
-                        session.segment_cache.add_segment(text, current_time)
+                    # Event-driven deduplication - check if duplicate
+                    if not session.segment_cache.is_duplicate(text, current_time):
                         completed_texts.append(text)
                         logger.info(f"✅ New completed text found: {text}")
                         
