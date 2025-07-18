@@ -315,7 +315,7 @@ class VoiceStreamOrchestrator:
         try:
             # Register memory plugin
             if config.MEMORY_PLUGIN_ENABLED:
-                from .plugins.base_plugin import PluginConfig
+                from plugins.base_plugin import PluginConfig
                 memory_config = PluginConfig(
                     enabled=True,
                     priority=1,
@@ -328,7 +328,7 @@ class VoiceStreamOrchestrator:
             
             # Register speaker plugin
             if config.SPEAKER_PLUGIN_ENABLED:
-                from .plugins.base_plugin import PluginConfig
+                from plugins.base_plugin import PluginConfig
                 speaker_config = PluginConfig(
                     enabled=True,
                     priority=2,
