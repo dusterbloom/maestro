@@ -1116,6 +1116,10 @@ class VoiceStreamOrchestrator:
                     
                 logger.info(f"Session {session.session_id}: TTS queue processing complete")
                 
+                # Clear segment cache when TTS completes to allow new conversation turns
+                session.segment_cache.clear()
+                logger.info(f"Session {session.session_id}: Segment cache cleared - ready for new conversation turn")
+                
         except asyncio.CancelledError:
             logger.info(f"🛑 Session {session.session_id}: TTS queue processing task cancelled")
             raise
