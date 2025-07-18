@@ -846,6 +846,15 @@ class VoiceStreamOrchestrator:
             session.tts_sequence_number = 0
             session.tts_queue.clear()
             
+            # Emit state transition event via session event bus (fire-and-forget)
+            await session.event_bus.emit("state_transition", {
+                "session_id": session.session_id,
+                "from_state": "idle",
+                "to_state": "processing",
+                "text": text,
+                "timestamp": time.time()
+            })
+            
             # Notify frontend that processing started
             await self._send_to_frontend(session, {
                 "type": "processing_started",
