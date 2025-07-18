@@ -124,7 +124,8 @@ class InterruptPlugin(BasePlugin):
         
         logger.info(f"🛑 Triggering interrupt for session {session_id} (audio_level: {audio_level})")
         
-        # Emit interrupt request event
+        # Emit interrupt request event through session event bus
+        # Note: The session event bus connection will be handled by the orchestrator
         await self.emit_event("interrupt_requested", {
             "session_id": session_id,
             "audio_level": audio_level,
