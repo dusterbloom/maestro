@@ -369,6 +369,22 @@ class VoiceStreamOrchestrator:
                 return True
         except Exception:
             return False
+    
+    def _setup_interrupt_event_routing(self):
+        """Set up routing for interrupt events from plugins to session event buses"""
+        async def handle_plugin_interrupt_request(event_data):
+            try:
+                session_id = event_data.get("session_id")
+                if session_id and session_id in self.sessions:
+                    session = self.sessions[session_id]
+                    # Route interrupt request to session event bus
+                    await session.event_bus.emit("interrupt_requested", event_data)
+            except Exception as e:
+                logger.error(f"Error routing interrupt request: {e}")
+        
+        # Register handler for plugin manager events
+        self.plugin_manager.event_bus.on("interrupt_requested", handle_plugin_interrupt_request)
+        logger.info("Interrupt event routing established")
         
     async def create_session(self, session_id: str) -> StreamSession:
         """Create a new voice session with improved WhisperLive connection"""
