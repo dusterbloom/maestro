@@ -160,6 +160,16 @@ class InterruptPlugin(BasePlugin):
             session_state["consecutive_voice_chunks"] = 0
             logger.debug(f"🔄 Reset interrupt state for session {session_id}")
     
+    async def process_event(self, event: "Event") -> None:
+        """Process an event. Must be non-blocking."""
+        # The event processing is handled by the event_bus system
+        # This method is required by BasePlugin but not used directly
+        pass
+    
+    async def shutdown(self) -> None:
+        """Shutdown the plugin gracefully."""
+        await self.cleanup()
+    
     async def handle_event(self, event_type: str, data: Dict[str, Any]):
         """Handle plugin events"""
         # This is already handled by the registered event handlers
