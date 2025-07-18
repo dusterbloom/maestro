@@ -17,12 +17,9 @@ export function useAutoInterrupt() {
   const isRecording = useAtomValue(isRecordingAtom)
   const voiceWebSocket = useAtomValue(voiceWebSocketAtom)
   
-  const voiceActivityTimeoutRef = useRef<NodeJS.Timeout>()
-  const lastInterruptTimeRef = useRef(0)
-  const analyserRef = useRef<AnalyserNode | null>(null)
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const animationFrameRef = useRef<number>()
+  // Note: With continuous streaming, the AudioProcessor now handles all audio monitoring
+  // This hook is kept for potential future enhancements but auto-interrupt is now handled
+  // by the orchestrator's InterruptPlugin based on continuous audio stream
   
   const shouldMonitorForInterruption = !isRecording && (isProcessing || isPlaying)
   
