@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from config import config
 from plugins import PluginManager, MemoryPlugin, SpeakerPlugin
+from plugins.interrupt_plugin import InterruptPlugin
 import hashlib
 
 # Configure logging with more detailed format
