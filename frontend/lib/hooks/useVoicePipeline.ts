@@ -25,7 +25,6 @@ import {
   audioPlayerAtom,
   sessionMetricsAtom
 } from '@/atoms/session.atoms'
-import type { OrchestratorMessage } from '@/lib/websocket/types'
 
 export function useVoicePipeline() {
   const setIsConnected = useSetAtom(isConnectedAtom)

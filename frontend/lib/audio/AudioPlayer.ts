@@ -115,18 +115,22 @@ export class AudioPlayer {
   }
   
     // Inside AudioPlayer class
+ // NEW METHOD
   public pause(): void {
-      if (this.currentAudio && !this.currentAudio.paused) {
-          this.currentAudio.pause();
-          console.log('Audio playback paused.');
-      }
+    if (this.currentAudio && !this.currentAudio.paused) {
+      this.currentAudio.pause();
+      console.log('AudioPlayer: Playback paused.');
+    }
   }
 
+  // NEW METHOD
   public resume(): void {
-      if (this.currentAudio && this.currentAudio.paused) {
-          this.currentAudio.play().catch(error => console.error("Resume failed", error));
-          console.log('Audio playback resumed.');
-      }
+    if (this.currentAudio && this.currentAudio.paused) {
+      this.currentAudio.play().catch(error => {
+        console.error("AudioPlayer: Resume failed", error);
+      });
+      console.log('AudioPlayer: Playback resumed.');
+    }
   }
   
   interrupt(): void {
