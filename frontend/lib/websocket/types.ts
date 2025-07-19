@@ -9,6 +9,14 @@ export interface ReadyMessage extends WebSocketMessage {
   mode?: 'ultra_fast'
 }
 
+export interface PauseTtsMessage extends WebSocketMessage {
+  type: 'pause_tts'
+}
+
+export interface ResumeTtsMessage extends WebSocketMessage {
+  type: 'resume_tts'
+}
+
 export interface LiveTranscriptMessage extends WebSocketMessage {
   type: 'live_transcript'
   text: string
@@ -73,6 +81,8 @@ export type OrchestratorMessage =
   | InterruptedMessage
   | ErrorMessage
   | SegmentsMessage
+  | PauseTtsMessage   
+  | ResumeTtsMessage 
 
 export type ClientMessage = 
   | InterruptRequestMessage

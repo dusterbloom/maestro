@@ -270,7 +270,7 @@ class SpeakerPlugin(BasePlugin):
         
         # This would be called from the plugin manager
         # For now, we'll log it
-        logger.info(f"Speaker identified: {speaker_id} (confidence: {confidence:.2f}) for user {user_id}")
+        # logger.info(f"Speaker identified: {speaker_id} (confidence: {confidence:.2f}) for user {user_id}")
     
     async def _save_speaker_profiles(self) -> None:
         """Save speaker profiles to persistent storage."""

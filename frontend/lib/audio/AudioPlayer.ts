@@ -28,6 +28,8 @@ export class AudioPlayer {
       this.processQueue()
     }
   }
+
+
   
   private async processQueue(): Promise<void> {
     if (this.queue.length === 0 || this.isPlaying) {
@@ -110,6 +112,21 @@ export class AudioPlayer {
     if (item.audio === this.currentAudio) {
       this.currentAudio = null
     }
+  }
+  
+    // Inside AudioPlayer class
+  public pause(): void {
+      if (this.currentAudio && !this.currentAudio.paused) {
+          this.currentAudio.pause();
+          console.log('Audio playback paused.');
+      }
+  }
+
+  public resume(): void {
+      if (this.currentAudio && this.currentAudio.paused) {
+          this.currentAudio.play().catch(error => console.error("Resume failed", error));
+          console.log('Audio playback resumed.');
+      }
   }
   
   interrupt(): void {

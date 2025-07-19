@@ -11,6 +11,7 @@ import {
   isProcessingAtom,
   processingTextAtom,
   isPlayingAtom,
+  isPausedAtom,
   errorAtom,
   transcriptSegmentsAtom,
   audioQueueLengthAtom
@@ -36,6 +37,7 @@ export function useVoicePipeline() {
   const setIsProcessing = useSetAtom(isProcessingAtom)
   const setProcessingText = useSetAtom(processingTextAtom)
   const setIsPlaying = useSetAtom(isPlayingAtom)
+  const setIsPaused = useSetAtom(isPausedAtom) 
   const setTranscriptSegments = useSetAtom(transcriptSegmentsAtom)
   const setAudioQueueLength = useSetAtom(audioQueueLengthAtom)
   
@@ -86,6 +88,17 @@ export function useVoicePipeline() {
         ws.bus.on('ready', (message) => {
           setSessionId(message.session_id)
         })
+
+        // Inside useVoicePipeline useEffect
+        ws.bus.on('pause_tts', () => {
+          console.log('Orchestrator requested TTS pause');
+          setIsPaused(true);
+        });
+
+        ws.bus.on('resume_tts', () => {
+          console.log('Orchestrator requested TTS resume');
+          setIsPaused(false);
+        });
         
         ws.bus.on('live_transcript', (message) => {
           setLiveTranscript(message.text)
@@ -112,6 +125,7 @@ export function useVoicePipeline() {
         
         ws.bus.on('sentence_audio', async (message) => {
           setIsPlaying(true)
+          setIsPaused(false)
           await player.playAudio(
             message.audio_data,
             message.sequence,
@@ -130,6 +144,7 @@ export function useVoicePipeline() {
           setIsProcessing(false)
           setProcessingText('')
           setIsPlaying(false)
+          setIsPaused(false)
           player.interrupt()
         })
         

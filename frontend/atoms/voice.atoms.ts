@@ -4,6 +4,10 @@ import { atom } from 'jotai'
 export const isRecordingAtom = atom(false)
 export const audioLevelAtom = atom(0)
 
+// Represents when the assistant's speech is paused for a user interruption
+export const isPausedAtom = atom(false)
+
+
 // Transcription state
 export const liveTranscriptAtom = atom('')
 export const finalTranscriptAtom = atom('')
