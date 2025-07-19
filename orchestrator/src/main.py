@@ -584,6 +584,7 @@ class VoiceStreamOrchestrator:
         
     async def _handle_whisper_messages(self, session: StreamSession):
         """Handle incoming messages from WhisperLive with correct protocol"""
+        logger.info(f"📨 [INTERRUPT_DEBUG] _handle_whisper_messages STARTED for session {session.session_id}")
         logger.debug(f"Session {session.session_id}: Starting WhisperLive message handler")
         
         try:
@@ -603,7 +604,8 @@ class VoiceStreamOrchestrator:
                         # WhisperLive sends transcription data with "uid" and "segments"
                         if "uid" in data and data["uid"] == session.session_id:
                             if "segments" in data:
-                                logger.info(f"📝 Received transcript segments from WhisperLive: {data['segments']}")
+                                logger.info(f"📝 [INTERRUPT_DEBUG] Received transcript segments from WhisperLive: {data['segments']}")
+                                logger.info(f"📝 [INTERRUPT_DEBUG] Session state when segments received: is_processing={session.is_processing}, tts_active={session.tts_active}")
                                 with open("/tmp/whisper_transcripts.log", "a") as f:
                                     f.write(json.dumps(data['segments']) + "\n")
                                 logger.debug(f"Session {session.session_id}: Processing transcript segments")
@@ -612,7 +614,9 @@ class VoiceStreamOrchestrator:
                                     "type": "segments",                              
                                     "segments": data["segments"]                     
                                     }))  
+                                logger.info(f"📝 [INTERRUPT_DEBUG] About to call _process_transcript_segments")
                                 await self._process_transcript_segments(session, data["segments"])
+                                logger.info(f"📝 [INTERRUPT_DEBUG] _process_transcript_segments completed")
                             elif "message" in data:
                                 # Handle status messages
                                 logger.debug(f"Session {session.session_id}: Processing status message: {data['message']}")
@@ -775,12 +779,14 @@ class VoiceStreamOrchestrator:
             
             # If voice detected during TTS, emit potential interrupt event
             if voice_detected and session.tts_active:
-                logger.info(f"🗣️ Voice detected during TTS for session {session_id}, audio level: {audio_level}")
+                logger.info(f"🗣️ [INTERRUPT_DEBUG] Voice detected during TTS for session {session_id}, audio level: {audio_level}")
+                logger.info(f"🗣️ [INTERRUPT_DEBUG] Session state: is_processing={session.is_processing}, tts_active={session.tts_active}")
                 await session.event_bus.emit("voice_during_tts", {
                     "session_id": session_id,
                     "audio_level": float(audio_level),
                     "timestamp": current_time
                 })
+                logger.info(f"🗣️ [INTERRUPT_DEBUG] voice_during_tts event emitted")
             
             return True
         except websockets.exceptions.ConnectionClosed:
@@ -795,7 +801,8 @@ class VoiceStreamOrchestrator:
     async def _process_transcript_segments(self, session: StreamSession, segments):
         """Process transcript segments and trigger LLM+TTS when sentence is complete"""
         session.update_activity()
-        logger.info(f"🎯 Processing transcript segments for session {session.session_id}: {segments}")
+        logger.info(f"🎯 [INTERRUPT_DEBUG] Processing transcript segments for session {session.session_id}: {segments}")
+        logger.info(f"🔍 [INTERRUPT_DEBUG] Session state: is_processing={session.is_processing}, tts_active={session.tts_active}, processing_text='{session.processing_text}'")
         
         # Find completed segments with event-driven deduplication
         completed_texts = []
@@ -809,7 +816,7 @@ class VoiceStreamOrchestrator:
                     # Event-driven deduplication - check if duplicate
                     if not session.segment_cache.is_duplicate(text, current_time):
                         completed_texts.append(text)
-                        logger.info(f"✅ New completed text found: {text}")
+                        logger.info(f"✅ [INTERRUPT_DEBUG] New completed text found: {text}")
                         
                         # Emit segment processed event via event bus (fire-and-forget)
                         await session.event_bus.emit("segment_processed", {
@@ -819,7 +826,7 @@ class VoiceStreamOrchestrator:
                             "timestamp": current_time
                         })
                     else:
-                        logger.debug(f"⚠️ Duplicate segment ignored: {text}")
+                        logger.debug(f"⚠️ [INTERRUPT_DEBUG] Duplicate segment ignored: {text}")
             else:
                 # Incomplete segment for live transcript display
                 if segment.get("text"):
@@ -827,7 +834,7 @@ class VoiceStreamOrchestrator:
         
         # Send live transcript to frontend
         current_transcript = " ".join(current_transcript_parts).strip()
-        logger.info(f"📝 Current live transcript: {current_transcript}")
+        logger.info(f"📝 [INTERRUPT_DEBUG] Current live transcript: {current_transcript}")
         
         if current_transcript != session.current_transcript:
             session.current_transcript = current_transcript
@@ -844,27 +851,20 @@ class VoiceStreamOrchestrator:
             })
         
         # Process completed sentences
+        logger.info(f"🔍 [INTERRUPT_DEBUG] Found {len(completed_texts)} completed texts to process")
         for completed_text in completed_texts:
-            # If this text was the one that was interrupted, ignore it until a new one arrives
-            if session.last_interrupted_text and completed_text.strip() == session.last_interrupted_text.strip():
-                logger.info(f"Session {session.session_id}: Ignoring previously interrupted text: {completed_text}")
-                # Do NOT clear last_interrupted_text until a new text arrives
-                continue
+            logger.info(f"🔍 [INTERRUPT_DEBUG] Checking if should process completed text: '{completed_text}'")
+            logger.info(f"🔍 [INTERRUPT_DEBUG] Session state before processing check: is_processing={session.is_processing}, tts_active={session.tts_active}")
 
-            # If we see a new text, clear the interrupted text marker
-            if session.last_interrupted_text:
-                logger.info(f"Session {session.session_id}: New input detected after interrupt. Clearing interrupted marker.")
-                session.last_interrupted_text = None
-
-            # CRITICAL: Block transcript processing during TTS to prevent feedback loops
+            # ALLOW transcript processing during TTS for interrupt detection
+            # Previously blocked, but now needed for human-natural interruption behavior
             if session.tts_active:
-                logger.info(f"🔇 Session {session.session_id}: Blocking transcript processing during TTS: {completed_text}")
-                logger.info(f"🔇 TTS is active - user speech will be processed only if interrupt is triggered")
-                continue
+                logger.info(f"🎤 [INTERRUPT_DEBUG] Session {session.session_id}: Processing transcript during TTS for interrupt: {completed_text}")
+                # Continue processing - don't block
 
             if self._is_sentence_complete(completed_text):
                 session.stt_end_time = time.time()
-                logger.info(f"Session {session.session_id}: Processing complete sentence: {completed_text}")
+                logger.info(f"📋 [INTERRUPT_DEBUG] Session {session.session_id}: Processing complete sentence: {completed_text}")
                 
                 # Emit plugin events for completed transcription
                 await self.plugin_manager.emit_event("transcription_complete", {
@@ -875,6 +875,8 @@ class VoiceStreamOrchestrator:
                 })
                 
                 await self._process_complete_sentence(session, completed_text)
+            else:
+                logger.info(f"📋 [INTERRUPT_DEBUG] Sentence not complete, skipping: {completed_text}")
                 
     def _is_sentence_complete(self, text: str) -> bool:
         """Simple sentence completion check"""
@@ -884,13 +886,35 @@ class VoiceStreamOrchestrator:
         
     async def _process_complete_sentence(self, session: StreamSession, text: str):
         """Process a complete sentence through LLM and TTS pipeline with proper interruption"""
-        if session.is_processing:
-            logger.info(f"Session {session.session_id}: Already processing, skipping: {text}")
-            return
+        logger.info(f"🚀 [INTERRUPT_DEBUG] _process_complete_sentence CALLED for session {session.session_id}")
+        logger.info(f"🚀 [INTERRUPT_DEBUG] Input text: '{text}'")
+        logger.info(f"🚀 [INTERRUPT_DEBUG] Session state: is_processing={session.is_processing}, tts_active={session.tts_active}")
+        
+        # IMMEDIATE INTERRUPT: Only interrupt for REAL new speech, not trailing silence
+        if session.is_processing or session.tts_active:
+            # Check if this might be trailing audio from the same utterance
+            current_time = time.time()
+            time_since_last_processing = current_time - getattr(session, 'last_processing_start', 0)
+            time_since_tts_start = current_time - getattr(session, 'tts_start_time', 0)
             
+            # Protect against trailing audio for 5 seconds after processing/TTS starts
+            min_time_since_start = min(time_since_last_processing, time_since_tts_start) if hasattr(session, 'tts_start_time') else time_since_last_processing
+            
+            if min_time_since_start < 5.0:
+                logger.info(f"🎤 [INTERRUPT_DEBUG] Ignoring potential trailing audio (only {min_time_since_start:.2f}s since processing/TTS started): '{text}'")
+                return
+            
+            logger.info(f"🛑 [IMMEDIATE_INTERRUPT] New user input detected during processing/TTS - ABORTING EVERYTHING")
+            logger.info(f"🛑 [IMMEDIATE_INTERRUPT] Previous: processing={session.is_processing}, tts_active={session.tts_active}")
+            await self.interrupt_session(session.session_id)
+            logger.info(f"🛑 [IMMEDIATE_INTERRUPT] Pipeline cleared, now processing new input: '{text}'")
+            
+        logger.info(f"🚀 [INTERRUPT_DEBUG] Setting session.is_processing=True")
         session.is_processing = True
         session.processing_text = text  # Store the text being processed
+        session.last_processing_start = time.time()  # Track when processing started
         session.total_requests += 1
+        logger.info(f"🚀 [INTERRUPT_DEBUG] Session state updated: is_processing={session.is_processing}, processing_text='{session.processing_text}'")
         
         try:
             # Clear any previous TTS abort signal and reset sequence
@@ -1035,6 +1059,7 @@ class VoiceStreamOrchestrator:
                     
                     try:
                         session.tts_active = True
+                        session.tts_start_time = time.time()  # Track when TTS started for trailing audio protection
                         
                         # Create client and track it for cancellation
                         client = httpx.AsyncClient(timeout=config.TTS_TIMEOUT)
@@ -1239,36 +1264,77 @@ class VoiceStreamOrchestrator:
                 
     async def interrupt_session(self, session_id: str) -> bool:
         """Interrupt TTS and processing for a session without dropping the WhisperLive connection."""
+        logger.info(f"🛑 [INTERRUPT_DEBUG] INTERRUPT REQUEST RECEIVED for session {session_id}")
+        
         if session_id not in self.sessions:
+            logger.error(f"🛑 [INTERRUPT_DEBUG] Session {session_id} not found in sessions")
             return False
             
         session = self.sessions[session_id]
         
+        # Log current session state before interruption
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Session state BEFORE interrupt:")
+        logger.info(f"🛑 [INTERRUPT_DEBUG]   - is_processing: {session.is_processing}")
+        logger.info(f"🛑 [INTERRUPT_DEBUG]   - tts_active: {session.tts_active}")
+        logger.info(f"🛑 [INTERRUPT_DEBUG]   - processing_text: '{session.processing_text}'")
+        logger.info(f"🛑 [INTERRUPT_DEBUG]   - tts_queue length: {len(session.tts_queue)}")
+        logger.info(f"🛑 [INTERRUPT_DEBUG]   - tts_abort_event.is_set(): {session.tts_abort_event.is_set()}")
+        
         # 1. Signal abort to all async operations
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 1: Setting tts_abort_event")
         session.tts_abort_event.set()
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 1: tts_abort_event set to {session.tts_abort_event.is_set()}")
         
         # 2. Cancel any running TTS task
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 2: Checking TTS task cancellation")
         if session.tts_task and not session.tts_task.done():
+            logger.info(f"🛑 [INTERRUPT_DEBUG] Step 2: Cancelling active TTS task")
             session.tts_task.cancel()
             try:
                 await session.tts_task
             except asyncio.CancelledError:
+                logger.info(f"🛑 [INTERRUPT_DEBUG] Step 2: TTS task cancelled successfully")
                 pass # Expected
-
+        else:
+            logger.info(f"🛑 [INTERRUPT_DEBUG] Step 2: No active TTS task to cancel")
+                
         # 3. Reset processing state
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 3: Resetting processing state")
         was_processing = session.is_processing
         was_tts_active = session.tts_active
         session.is_processing = False
         session.tts_active = False
+        session.processing_text = None  # Clear the processing text on interrupt
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 3: State reset - was_processing={was_processing}, was_tts_active={was_tts_active}")
         
         # 4. Clear the TTS queue to prevent pending sentences from playing
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 4: Clearing TTS queue (had {len(session.tts_queue)} items)")
         session.tts_queue.clear()
         session.tts_sequence_number = 0
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 4: TTS queue cleared, sequence reset to 0")
+        
+        # 4.5. Cancel any active HTTP requests to TTS service
+        if hasattr(session, 'active_http_clients'):
+            active_clients = list(session.active_http_clients)
+            logger.info(f"🛑 [INTERRUPT_DEBUG] Step 4.5: Cancelling {len(active_clients)} active HTTP clients")
+            for client in active_clients:
+                try:
+                    await client.aclose()
+                    session.active_http_clients.discard(client)
+                    logger.info(f"🛑 [INTERRUPT_DEBUG] Step 4.5: HTTP client cancelled successfully")
+                except Exception as e:
+                    logger.warning(f"🛑 [INTERRUPT_DEBUG] Step 4.5: Error closing HTTP client during interrupt: {e}")
+            logger.info(f"🛑 [INTERRUPT_DEBUG] Step 4.5: All active HTTP clients cancelled")
+        else:
+            logger.info(f"🛑 [INTERRUPT_DEBUG] Step 4.5: No active HTTP clients to cancel")
         
         # 5. Clear segment cache to prevent duplicate processing of interrupted text
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 5: Clearing segment cache")
         session.segment_cache.clear()
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 5: Segment cache cleared")
         
         # 6. Emit interrupt event via session event bus (fire-and-forget)
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 6: Emitting interrupt events")
         current_time = time.time()
         await session.event_bus.emit("interrupt_triggered", {
             "session_id": session_id,
@@ -1276,30 +1342,39 @@ class VoiceStreamOrchestrator:
             "was_tts_active": was_tts_active,
             "timestamp": current_time
         })
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 6: Interrupt event emitted via session event bus")
         
-        # 7. Send a reset message to WhisperLive to clear its internal buffer
-        if session.whisper_ws and self._is_websocket_connected(session.whisper_ws):
-            try:
-                # This message tells WhisperLive to reset the client's audio buffer
-                await session.whisper_ws.send(json.dumps({"uid": session.session_id, "message": "CLIENT_DISCONNECT"}))
-                logger.info(f"Session {session_id}: Sent reset signal to WhisperLive.")
-            except Exception as e:
-                logger.error(f"Session {session_id}: Failed to send reset signal to WhisperLive: {e}")
+        # 7. Keep WhisperLive connection open - do NOT disconnect during interrupt
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 7: Keeping WhisperLive connection open for continuous speech processing")
+        # REMOVED: CLIENT_DISCONNECT message that was closing WhisperLive connection
+        # This allows interrupted speech to continue being processed immediately
 
         # 8. Emit plugin events for interrupt
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 8: Emitting plugin interrupt events")
         await self.plugin_manager.emit_event("interrupted", {
             "session_id": session_id,
             "was_processing": was_processing,
             "was_tts_active": was_tts_active,
             "timestamp": current_time
         })
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 8: Plugin interrupt events emitted")
 
         # 9. Notify the frontend
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 9: Notifying frontend")
         await self._send_to_frontend(session, {
             "type": "interrupted"
         })
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Step 9: Frontend notification sent")
         
-        logger.info(f"Session {session_id}: Interrupted TTS and processing. WhisperLive connection remains open.")
+        # Log final session state after interruption
+        logger.info(f"🛑 [INTERRUPT_DEBUG] Session state AFTER interrupt:")
+        logger.info(f"🛑 [INTERRUPT_DEBUG]   - is_processing: {session.is_processing}")
+        logger.info(f"🛑 [INTERRUPT_DEBUG]   - tts_active: {session.tts_active}")
+        logger.info(f"🛑 [INTERRUPT_DEBUG]   - processing_text: '{session.processing_text}'")
+        logger.info(f"🛑 [INTERRUPT_DEBUG]   - tts_queue length: {len(session.tts_queue)}")
+        logger.info(f"🛑 [INTERRUPT_DEBUG]   - tts_abort_event.is_set(): {session.tts_abort_event.is_set()}")
+        
+        logger.info(f"🛑 [INTERRUPT_DEBUG] INTERRUPT COMPLETE for session {session_id}")
         return True
         
     async def _session_cleanup_task(self):

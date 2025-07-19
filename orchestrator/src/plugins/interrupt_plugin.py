@@ -30,19 +30,13 @@ class InterruptPlugin(BasePlugin):
         """Initialize the interrupt plugin"""
         logger.info("🛑 InterruptPlugin initialized - ready for voice activity detection")
         
-        # Register event handlers
-        self.register_event_handler("audio_monitor", self._handle_audio_monitor)
-        self.register_event_handler("voice_during_tts", self._handle_voice_during_tts)
-        self.register_event_handler("interrupted", self._handle_interrupted)
-        self.register_event_handler("processing_complete", self._handle_processing_complete)
-        
-        self.is_running = True
+        # Note: Event handlers are registered directly with session event bus in main.py
+        # when a new session is created
         
     async def cleanup(self):
         """Clean up plugin resources"""
         logger.info("🛑 InterruptPlugin cleanup")
         self.session_states.clear()
-        self.is_running = False
         
     def _get_session_state(self, session_id: str) -> Dict[str, Any]:
         """Get or create session state for interrupt tracking"""

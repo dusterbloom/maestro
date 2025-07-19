@@ -19,6 +19,8 @@ import {
 } from '@/atoms/session.atoms'
 
 export function VoiceButton() {
+  // Track monitoring mode (for barge-in/interrupt detection)
+  const isMonitoringRef = useRef(false);
   const [isRecording, setIsRecording] = useAtom(isRecordingAtom)
   const [isConnected] = useAtom(isConnectedAtom)
   const isProcessing = useAtomValue(isProcessingAtom)
@@ -34,6 +36,25 @@ export function VoiceButton() {
   
   // Toggle recording on/off
   const toggleRecording = useCallback(async () => {
+    // Always stop monitoring mode before starting a new recording
+    if (isMonitoringRef.current) {
+      audioProcessor?.stopProcessing();
+      isMonitoringRef.current = false;
+      console.log('🛑 Stopped monitoring mode before new recording');
+    }
+    // Always reset audio processor to recording mode after an interrupt
+    // This ensures that after an interrupt, the next utterance is treated as a new segment
+    if (!isConnected || !voiceWebSocket || !audioProcessor) {
+      setError('Not connected to voice service')
+      return
+    }
+
+    // If we are in monitoring mode (after interrupt), force stop and reset before starting new recording
+    if (!isRecording && !isProcessing && !isPlaying) {
+      // Stop any monitoring mode
+      audioProcessor.stopProcessing();
+      console.log('🔄 Resetting audio processor to recording mode after interrupt');
+    }
     if (!isConnected || !voiceWebSocket || !audioProcessor) {
       setError('Not connected to voice service')
       return
@@ -46,6 +67,8 @@ export function VoiceButton() {
     }
     
     if (isRecording) {
+      console.log('🛑 User stopped recording, sending end_audio (should always happen after utterance, even post-interrupt)')
+      isMonitoringRef.current = true; // Next, we enter monitoring mode
       // Stop recording but keep processing for interrupt detection
       console.log('🛑 Stopping recording...')
       setIsRecording(false)
@@ -60,6 +83,7 @@ export function VoiceButton() {
       // Switch audio processor to monitoring mode (continuous streaming for interrupt detection)
       if (audioProcessor) {
         audioProcessor.startProcessing((audioData) => {
+          if (!isMonitoringRef.current) return; // Only send audio if in monitoring mode
           // Only send audio for monitoring, not for STT
           voiceWebSocket.sendAudio(audioData)
           
@@ -72,7 +96,8 @@ export function VoiceButton() {
     } else {
       // Start recording
       try {
-        console.log('🎤 Starting recording...')
+        isMonitoringRef.current = false;
+        console.log('🎤 Starting recording (should always be in recording mode, not monitoring, after interrupt or new utterance)...')
         setIsRecording(true)
         setError(null)
         
