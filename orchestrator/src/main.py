@@ -845,11 +845,16 @@ class VoiceStreamOrchestrator:
         
         # Process completed sentences
         for completed_text in completed_texts:
-            # If this text was the one that was interrupted, ignore it
+            # If this text was the one that was interrupted, ignore it until a new one arrives
             if session.last_interrupted_text and completed_text.strip() == session.last_interrupted_text.strip():
                 logger.info(f"Session {session.session_id}: Ignoring previously interrupted text: {completed_text}")
-                session.last_interrupted_text = None  # Clear after ignoring once
+                # Do NOT clear last_interrupted_text until a new text arrives
                 continue
+
+            # If we see a new text, clear the interrupted text marker
+            if session.last_interrupted_text:
+                logger.info(f"Session {session.session_id}: New input detected after interrupt. Clearing interrupted marker.")
+                session.last_interrupted_text = None
 
             # CRITICAL: Block transcript processing during TTS to prevent feedback loops
             if session.tts_active:
