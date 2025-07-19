@@ -8,6 +8,8 @@ import traceback
 import sys
 from typing import Dict, Set, Optional, Any, Callable
 from urllib.parse import urlparse
+from functools import partial # <-- ADD THIS IMPORT
+
 import websockets
 import websockets.exceptions
 import httpx
@@ -29,7 +31,7 @@ import hashlib
 
 # Configure logging with more detailed format
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -212,7 +214,10 @@ class StreamSession:
         self.tts_processing_lock = asyncio.Lock()  # Ensures sequential TTS processing
         self.tts_task: Optional[asyncio.Task] = None  # Task for processing TTS queue
         self.whisper_message_handler_task: Optional[asyncio.Task] = None # Task for handling whisper messages
-        
+        # self.is_paused = False # New state
+        # self.resume_timer_task: Optional[asyncio.Task] = None # To hold the resume timer
+
+
         # Event bus for ultra-fast processing
         self.event_bus = PipelineEventBus()
         
@@ -403,7 +408,10 @@ class VoiceStreamOrchestrator:
         logger.debug(f"Creating StreamSession object for {session_id}")
         session = StreamSession(session_id)
         logger.debug(f"StreamSession created for {session_id}")
-        
+        # soft_interrupt_handler = partial(self.handle_soft_interrupt, session)
+        # session.event_bus.on("soft_interrupt_detected", soft_interrupt_handler)
+    
+
         # Establish WhisperLive connection with proper headers
         logger.debug(f"Establishing WhisperLive connection for session {session_id}")
         success = await self._connect_to_whisper(session)
@@ -705,10 +713,10 @@ class VoiceStreamOrchestrator:
                 
         try:
             # DETAILED LOGGING FOR AUDIO DATA FORMAT DEBUGGING
-            logger.info(f"📤 Sending {len(audio_data)} bytes of audio to WhisperLive for session {session_id}")
-            logger.debug(f"🔍 Audio data type: {type(audio_data)}")
+            # logger.info(f"📤 Sending {len(audio_data)} bytes of audio to WhisperLive for session {session_id}")
+            # logger.debug(f"🔍 Audio data type: {type(audio_data)}")
             # logger.debug(f"🔍 Audio data repr: {repr(audio_data)}")
-            logger.debug(f"🔍 Audio data length: {len(audio_data)}")
+            # logger.debug(f"🔍 Audio data length: {len(audio_data)}")
             
             if len(audio_data) >= 16:
                 # logger.debug(f"🔍 First 16 bytes (hex): {audio_data[:16].hex()}")
@@ -746,7 +754,7 @@ class VoiceStreamOrchestrator:
                 
             await session.whisper_ws.send(audio_data)
             session.update_activity()
-            logger.info(f"✅ Successfully sent audio to WhisperLive for session {session_id}")
+            # logger.info(f"✅ Successfully sent audio to WhisperLive for session {session_id}")
             
             # Emit plugin events for audio data
             import numpy as np
@@ -853,9 +861,24 @@ class VoiceStreamOrchestrator:
         # Process completed sentences
         logger.info(f"🔍 [INTERRUPT_DEBUG] Found {len(completed_texts)} completed texts to process")
         for completed_text in completed_texts:
-            logger.info(f"🔍 [INTERRUPT_DEBUG] Checking if should process completed text: '{completed_text}'")
-            logger.info(f"🔍 [INTERRUPT_DEBUG] Session state before processing check: is_processing={session.is_processing}, tts_active={session.tts_active}")
+            # This logic is now much simpler
+            if self._is_sentence_complete(completed_text):
+                session.stt_end_time = time.time()
+                logger.info(f"📋 Session {session.session_id}: Processing complete sentence: {completed_text}")
+                
+                await self.plugin_manager.emit_event("transcription_complete", {
+                    "session_id": session.session_id,
+                    "text": completed_text,
+                    "timestamp": time.time(),
+                    "user_id": session.session_id
+                })
+                
+                await self._process_complete_sentence(session, completed_text)
+            else:
+                logger.debug(f"Sentence not complete, skipping: {completed_text}")
 
+
+                        
             # ALLOW transcript processing during TTS for interrupt detection
             # Previously blocked, but now needed for human-natural interruption behavior
             if session.tts_active:
@@ -1144,11 +1167,10 @@ class VoiceStreamOrchestrator:
                     except asyncio.TimeoutError:
                         pass
                     
-                logger.info(f"Session {session.session_id}: TTS queue processing complete")
+                # logger.info(f"Session {session.session_id}: TTS queue processing complete")
                 
                 # Clear segment cache when TTS completes to allow new conversation turns
                 session.segment_cache.clear()
-                logger.info(f"Session {session.session_id}: Segment cache cleared - ready for new conversation turn")
                 
         except asyncio.CancelledError:
             logger.info(f"🛑 Session {session.session_id}: TTS queue processing task cancelled")
@@ -1256,9 +1278,9 @@ class VoiceStreamOrchestrator:
         """Send message to frontend WebSocket"""
         if session.frontend_ws:
             try:
-                logger.info(f"📤 Sending to frontend: {message}")
+                # logger.info(f"📤 Sending to frontend: {message}")
                 await session.frontend_ws.send_text(json.dumps(message))
-                logger.info(f"✅ Successfully sent to frontend: {message.get('type', 'unknown')}")
+                # logger.info(f"✅ Successfully sent to frontend: {message.get('type', 'unknown')}")
             except Exception as e:
                 logger.error(f"❌ Failed to send to frontend: {e}")
                 
@@ -1396,6 +1418,44 @@ class VoiceStreamOrchestrator:
                 logger.error(f"Session cleanup error: {e}")
                 await asyncio.sleep(60)
 
+
+    # async def _schedule_resume(self, session: StreamSession, delay: float):
+    #     """If no further user input, resume TTS after a delay."""
+    #     try:
+    #         await asyncio.sleep(delay)
+    #         # Only resume if we are still in a paused state
+    #         if session.is_paused:
+    #             logger.info(f"User did not commit to interrupt. Resuming TTS for session {session.session_id}")
+    #             session.is_paused = False
+    #             await self._send_to_frontend(session, {"type": "resume_tts"})
+    #     except asyncio.CancelledError:
+    #         # This is expected if the user commits to the interrupt
+    #         logger.info(f"Resume timer cancelled for session {session.session_id}")
+
+    # # ADD THIS NEW METHOD
+    # async def handle_soft_interrupt(self, session: StreamSession, event_data: Dict[str, Any]):
+
+    #     """Handles the initial detection of voice during TTS."""
+    #     # Don't do anything if TTS isn't active or if we're already paused
+    #     if not session.tts_active or session.is_paused:
+    #         return
+
+    #     logger.info(f"Pausing TTS for session {session.session_id} to listen to user.")
+    #     session.is_paused = True
+
+    #     # 1. Tell the frontend to pause its audio playback
+    #     await self._send_to_frontend(session, {"type": "pause_tts"})
+
+    #     # 2. Cancel any pre-existing resume timer
+    #     if session.resume_timer_task and not session.resume_timer_task.done():
+    #         session.resume_timer_task.cancel()
+
+    #     # 3. Start a new timer. If the user doesn't say a complete sentence
+    #     #    within this time, we will automatically resume.
+    #     session.resume_timer_task = asyncio.create_task(
+    #         self._schedule_resume(session, delay=2.0)  # 2-second listening window
+    #     )
+
 # Initialize global orchestrator
 orchestrator = VoiceStreamOrchestrator()
 
@@ -1429,11 +1489,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     if "bytes" in message:
                         # Audio data - forward to WhisperLive
                         audio_bytes = message["bytes"]
-                        logger.info(f"🎤 Received {len(audio_bytes)} bytes of audio data from frontend")
+                        # logger.info(f"🎤 Received {len(audio_bytes)} bytes of audio data from frontend")
                         
                         # DETAILED LOGGING FOR AUDIO DATA FORMAT DEBUGGING
-                        logger.debug(f"🔍 WebSocket message type: {message['type']}")
-                        logger.debug(f"🔍 WebSocket message keys: {list(message.keys())}")
+                        # logger.debug(f"🔍 WebSocket message type: {message['type']}")
+                        # logger.debug(f"🔍 WebSocket message keys: {list(message.keys())}")
                         # logger.debug(f"🔍 Raw audio_bytes type: {type(audio_bytes)}")
                         # logger.debug(f"🔍 Raw audio_bytes repr: {repr(audio_bytes)}")
                         
@@ -1481,6 +1541,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     finally:
         if session_id in orchestrator.sessions:
             orchestrator.sessions[session_id].frontend_ws = None
+
+
 # Ultra-fast WebSocket endpoint for voice processing
 @app.websocket("/ws/voice")
 async def websocket_voice_endpoint(websocket: WebSocket):
@@ -1556,9 +1618,11 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                             await orchestrator.interrupt_session(session_id)
                             
                         elif data.get("type") == "end_audio":
-                            # Forward end signal to WhisperLive
-                            if session.whisper_ws:
-                                await session.whisper_ws.send("END_OF_AUDIO")
+                            logger.info(f"🔚 End of audio signal received for session {session_id}")
+                           
+                        # Forward end signal to WhisperLive as before
+                        if session.whisper_ws:
+                            await session.whisper_ws.send("END_OF_AUDIO")
                                 
                         elif data.get("type") == "ultra_fast_text":
                             # Direct text processing for ultra-fast mode

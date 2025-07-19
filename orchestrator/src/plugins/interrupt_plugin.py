@@ -112,6 +112,7 @@ class InterruptPlugin(BasePlugin):
         # Check debounce time
         time_since_last_interrupt = timestamp - session_state["last_interrupt_time"]
         if time_since_last_interrupt < self.interrupt_debounce_time:
+            # This is now a debug message because it's a low-level detail
             logger.debug(f"⏰ Interrupt debounced for session {session_id}")
             return
             
@@ -119,21 +120,25 @@ class InterruptPlugin(BasePlugin):
         session_state["last_interrupt_time"] = timestamp
         session_state["interrupt_count"] += 1
         
-        logger.info(f"🛑 Triggering interrupt for session {session_id} (audio_level: {audio_level})")
+        logger.info(f"🛑 INTERRUPT TRIGGERED for session {session_id} due to voice activity.")
         
-        # Directly call orchestrator interrupt method for ultra-low latency
+        # --- START OF CORRECTION ---
+        # Directly call the orchestrator's main interrupt method for an immediate stop.
         if self.orchestrator:
             try:
+                # This is the "big red button". It kills the backend pipeline instantly.
                 await self.orchestrator.interrupt_session(session_id)
             except Exception as e:
                 logger.error(f"Error triggering interrupt: {e}")
         else:
             logger.warning("No orchestrator reference available for interrupt")
+        # --- END OF CORRECTION ---
         
         # Reset voice activity tracking
         session_state["voice_activity_start"] = None
         session_state["consecutive_voice_chunks"] = 0
-    
+
+
     async def _handle_interrupted(self, event_data: Dict[str, Any]):
         """Handle interrupt acknowledgment"""
         session_id = event_data.get("session_id")
