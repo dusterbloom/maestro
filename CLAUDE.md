@@ -2,9 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🚨 CURRENT REBUILD STATUS - INTEGRATION PHASE
+
+**CRITICAL**: Check `memory-bank/maestro-rebuild-progress.md` and `memory-bank/implementation-steps.md` for current status.
+
+**Foundation Complete**: Distributed event bus and service coordination systems implemented.
+**Next Phase**: Integrate new systems into existing main.py orchestrator.
+
 ## Overview
 
 This is **Maestro**, a real-time voice conversation system that orchestrates speech-to-text (STT), large language models (LLM), and text-to-speech (TTS) services. The system is designed for low-latency voice interactions with interrupt capabilities.
+
+**Current Status**: System architecture rebuilt - replacing broken event system with proper distributed coordination.
 
 ## Architecture
 

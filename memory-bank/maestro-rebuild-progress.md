@@ -14,11 +14,12 @@
 2. **Redis**: Configured in docker-compose but missing client library
 3. **Context Preservation**: Need strategy to maintain progress across sessions
 
-### Next Phase: Design Distributed Event Bus
-- Use existing Redis container
-- Add Redis client library to requirements
-- Implement pub-sub pattern for true cross-service coordination
-- Create service interface protocol with standardized endpoints
+### Next Phase: Orchestrator Integration
+- ✅ Redis client library added to requirements
+- ✅ Distributed event bus implemented (event_bus.py)
+- ✅ Service coordination system implemented (service_coordinator.py)
+- 🔄 **CURRENT**: Integrate new systems into existing main.py orchestrator
+- **KEY INSIGHT**: Use existing service APIs (Ollama REST, Kokoro REST, WhisperLive WebSocket) + event bus for coordination
 
 ### Progress Tracking Plan
 - Document each implementation step in memory bank
@@ -28,9 +29,10 @@
 
 ## Implementation Phases
 1. ✅ Assessment: System architecture analysis complete
-2. 🔄 Context Management: Setting up persistent progress tracking
-3. ⏳ Event Bus: Design distributed coordination system
-4. ⏳ Service Interface: Standardized endpoints for all services
-5. ⏳ State Coordination: Cross-service state management
-6. ⏳ Interrupt Protocol: Multi-step interrupt with acknowledgments
-7. ⏳ Buffer Management: Cross-service buffer coordination
+2. ✅ Context Management: Memory bank progress tracking implemented
+3. ✅ Event Bus: Distributed Redis pub-sub system complete (event_bus.py)
+4. ✅ Service Strategy: Use existing APIs + event coordination (no wrappers needed)
+5. ✅ State Coordination: ServiceCoordinator system complete (service_coordinator.py)
+6. ✅ Interrupt Protocol: Coordinated interrupt workflow complete
+7. 🔄 **CURRENT**: Orchestrator Integration - Replace broken PipelineEventBus
+8. ⏳ Testing & Validation: Test coordinated interrupts with terminal client

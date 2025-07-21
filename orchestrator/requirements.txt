@@ -18,3 +18,7 @@ python-multipart
 numpy
 pydantic
 python-json-logger
+
+# --- Distributed System Support ---
+redis
+aioredis
