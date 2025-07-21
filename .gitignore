@@ -35,8 +35,12 @@ Thumbs.db
 logs/*.txt
 logs/
 
+llms.txt
+
 # Gemini
 .gemini/settings.json
+CLAUDE.md
+GEMINE.md
 
 # Roo Code
 .roo/mcp.json
@@ -44,4 +48,5 @@ logs/
 
 path/
 .ruff_cache
-GEMINI.md
+.gemini/
+.claude
