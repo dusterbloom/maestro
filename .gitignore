@@ -39,8 +39,7 @@ llms.txt
 
 # Gemini
 .gemini/settings.json
-CLAUDE.md
-GEMINE.md
+
 
 # Roo Code
 .roo/mcp.json
@@ -50,3 +49,10 @@ path/
 .ruff_cache
 .gemini/
 .claude
+
+
+CLAUDE.md
+GEMINE.md
+
+
+.roo

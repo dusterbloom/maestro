@@ -46,6 +46,11 @@ class Config:
     # WhisperLive Settings
     NO_SPEECH_THRESHOLD: float = float(os.getenv("NO_SPEECH_THRESHOLD", "0.45"))
     VAD_ENABLED: bool = os.getenv("VAD_ENABLED", "true").lower() == "true"
+    WHISPER_SAME_OUTPUT_THRESHOLD: int = int(os.getenv("WHISPER_SAME_OUTPUT_THRESHOLD", "2"))
+    WHISPER_MAX_CLIENTS: int = int(os.getenv("WHISPER_MAX_CLIENTS", "4"))
+    WHISPER_MAX_CONNECTION_TIME: int = int(os.getenv("WHISPER_MAX_CONNECTION_TIME", "3600"))
+    WHISPER_SEND_LAST_N_SEGMENTS: int = int(os.getenv("WHISPER_SEND_LAST_N_SEGMENTS", "10"))
+    WHISPER_CLIP_AUDIO: bool = os.getenv("WHISPER_CLIP_AUDIO", "false").lower() == "true"
     
     # Plugin Configuration
     MEMORY_PLUGIN_ENABLED: bool = os.getenv("MEMORY_PLUGIN_ENABLED", "true").lower() == "true"

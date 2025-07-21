@@ -58,7 +58,11 @@ class InterruptPlugin(BasePlugin):
         tts_active = event_data.get("tts_active", False)
         timestamp = event_data.get("timestamp", time.time())
         
+        # DEBUG: Log every audio_monitor event to verify it's working
+        logger.debug(f"🔍 [INTERRUPT_DEBUG] audio_monitor event: session={session_id}, level={audio_level:.4f}, voice={voice_detected}, tts_active={tts_active}, processing={is_processing}")
+        
         if not session_id:
+            logger.warning(f"🔍 [INTERRUPT_DEBUG] No session_id in audio_monitor event")
             return
             
         session_state = self._get_session_state(session_id)
@@ -66,31 +70,47 @@ class InterruptPlugin(BasePlugin):
         # Only monitor for interrupts during TTS playback
         if not tts_active:
             # Reset voice activity tracking when not in TTS
+            if session_state["voice_activity_start"] is not None:
+                logger.debug(f"🔍 [INTERRUPT_DEBUG] Resetting voice tracking - TTS not active for session {session_id}")
             session_state["voice_activity_start"] = None
             session_state["consecutive_voice_chunks"] = 0
             return
             
+        # DEBUG: Log when TTS is active to verify we're monitoring
+        logger.info(f"🔍 [INTERRUPT_DEBUG] TTS ACTIVE - monitoring for interrupts: session={session_id}, level={audio_level:.4f}, voice={voice_detected}, threshold={self.voice_activity_threshold}")
+            
+        # TEMPORARY DEBUG: Trigger interrupt on ANY audio above noise floor during TTS
+        # This will help us test if the interrupt system works at all
+        if audio_level > 0.000010:  # Any audio above noise floor
+            logger.info(f"🚨 [INTERRUPT_TEST] FORCING INTERRUPT! level={audio_level:.6f} > 0.000010")
+            # Force trigger interrupt to test the system
+            await self._trigger_interrupt(session_id, audio_level, timestamp)
+        
         # Track voice activity during TTS
         if voice_detected and audio_level > self.voice_activity_threshold:
             # Start tracking voice activity
             if session_state["voice_activity_start"] is None:
                 session_state["voice_activity_start"] = timestamp
                 session_state["consecutive_voice_chunks"] = 1
-                logger.debug(f"🎤 Voice activity started for session {session_id}")
+                logger.info(f"🔍 [INTERRUPT_DEBUG] 🎤 Voice activity STARTED for session {session_id}, level={audio_level:.4f} > threshold={self.voice_activity_threshold}")
             else:
                 session_state["consecutive_voice_chunks"] += 1
                 
             # Check if voice activity has lasted long enough to trigger interrupt
             voice_duration = timestamp - session_state["voice_activity_start"]
+            logger.info(f"🔍 [INTERRUPT_DEBUG] Voice duration: {voice_duration:.3f}s, threshold: {self.voice_duration_threshold}s")
             if voice_duration >= self.voice_duration_threshold:
+                logger.info(f"🔍 [INTERRUPT_DEBUG] Voice duration reached threshold - TRIGGERING INTERRUPT!")
                 await self._trigger_interrupt(session_id, audio_level, timestamp)
                 
         else:
             # Reset voice activity tracking when voice stops
             if session_state["voice_activity_start"] is not None:
-                logger.debug(f"🎤 Voice activity ended for session {session_id}")
+                logger.debug(f"🔍 [INTERRUPT_DEBUG] 🎤 Voice activity ENDED for session {session_id} (level={audio_level:.4f}, voice_detected={voice_detected})")
                 session_state["voice_activity_start"] = None
                 session_state["consecutive_voice_chunks"] = 0
+            elif tts_active and audio_level > 0.005:  # Log when we have audio but no voice detection during TTS
+                logger.debug(f"🔍 [INTERRUPT_DEBUG] Audio detected during TTS but no voice: level={audio_level:.4f}, voice={voice_detected}")
     
     async def _handle_voice_during_tts(self, event_data: Dict[str, Any]):
         """Handle voice detection during TTS events"""
@@ -98,11 +118,15 @@ class InterruptPlugin(BasePlugin):
         audio_level = event_data.get("audio_level", 0)
         timestamp = event_data.get("timestamp", time.time())
         
+        logger.info(f"🔍 [INTERRUPT_DEBUG] 🗣️ voice_during_tts event received: session={session_id}, level={audio_level:.4f}")
+        
         if not session_id:
+            logger.warning(f"🔍 [INTERRUPT_DEBUG] No session_id in voice_during_tts event")
             return
             
         # This is a higher-level event that indicates definite voice activity during TTS
         # Use this for more aggressive interrupt detection
+        logger.info(f"🔍 [INTERRUPT_DEBUG] Triggering interrupt from voice_during_tts event")
         await self._trigger_interrupt(session_id, audio_level, timestamp)
     
     async def _trigger_interrupt(self, session_id: str, audio_level: float, timestamp: float):
@@ -126,12 +150,17 @@ class InterruptPlugin(BasePlugin):
         # Directly call the orchestrator's main interrupt method for an immediate stop.
         if self.orchestrator:
             try:
+                logger.info(f"🚨 [INTERRUPT_DEBUG] CALLING orchestrator.interrupt_session({session_id}) NOW!")
                 # This is the "big red button". It kills the backend pipeline instantly.
                 await self.orchestrator.interrupt_session(session_id)
+                logger.info(f"✅ [INTERRUPT_DEBUG] orchestrator.interrupt_session({session_id}) COMPLETED!")
             except Exception as e:
-                logger.error(f"Error triggering interrupt: {e}")
+                logger.error(f"❌ [INTERRUPT_DEBUG] Error triggering interrupt: {e}")
+                import traceback
+                logger.error(f"❌ [INTERRUPT_DEBUG] Traceback: {traceback.format_exc()}")
         else:
-            logger.warning("No orchestrator reference available for interrupt")
+            logger.error(f"❌ [INTERRUPT_DEBUG] NO ORCHESTRATOR REFERENCE! self.orchestrator={self.orchestrator}")
+            logger.error(f"❌ [INTERRUPT_DEBUG] This is why interrupts don't work!")
         # --- END OF CORRECTION ---
         
         # Reset voice activity tracking

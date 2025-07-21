@@ -2,238 +2,140 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## CRITICAL TECHNICAL ACCURACY REQUIREMENTS
+## Overview
 
-**MANDATORY WORKFLOW FOR ALL TECHNICAL SOLUTIONS:**
-
-1. **EVIDENCE-BASED RESPONSES ONLY**: Every technical implementation must be backed by actual source code, documentation, or verified examples from the real services being integrated
-2. **SEARCH FIRST, CODE SECOND**: Before providing any solution, search for and examine actual implementations using MCP tools
-3. **VERIFY PROTOCOLS**: For any API/WebSocket/protocol integration, find and examine the real implementation code
-4. **SOURCE OR STOP**: If you cannot find authoritative sources, explicitly state limitations rather than making assumptions
-5. **NO ASSUMPTIONS EVER**: Never assume formats, endpoints, or protocols. Always verify first.
-6. **DEBUG CURRENT STATE**: When something isn't working, examine the current state before making changes
-
-**PROHIBITED APPROACHES - THESE WILL CAUSE IMMEDIATE FAILURE:**
-- Assuming WebSocket protocols without examining actual source code
-- Providing "typical" FastAPI patterns without verifying target service requirements
-- Making educated guesses about Docker service configurations
-- Extrapolating from general documentation when service-specific implementation exists
-- Creating new endpoints without verifying current ones work
-- Assuming audio formats without examining actual data
-- Making changes without understanding the current problem
-- Backtracking or creating workarounds instead of fixing root issues
-
-**REQUIRED VERIFICATION PROCESS:**
-Before implementing any integration:
-1. Use **Deep Graph MCP** to examine actual source code of target services
-2. Search for real protocol implementations, not generic patterns
-3. Verify audio formats, WebSocket message structures, and API endpoints from source
-4. Reference specific code examples and documentation URLs
-5. If verification fails, state: "I cannot find verified implementation details for [X], so I cannot provide a reliable solution"
-
-**DEBUGGING WORKFLOW - MANDATORY FOR ALL ISSUES:**
-When something isn't working:
-1. **EXAMINE CURRENT STATE FIRST**: Read logs, check actual API responses, verify current behavior
-2. **IDENTIFY ROOT CAUSE**: Don't make changes until you understand what's actually broken
-3. **VERIFY SINGLE ISSUE**: Fix one specific problem, don't create new solutions
-4. **TEST INCREMENTALLY**: Verify each change works before making another
-5. **NO WORKAROUNDS**: Fix the actual problem, don't create alternatives
-
-**EXAMPLE - WhisperLive Integration:**
-- ✅ Correct: "Using Deep Graph MCP to examine `collabora/WhisperLive` source code..." → finds actual WebSocket protocol
-- ❌ Incorrect: "WhisperLive typically uses WebSocket connections that expect..." [without source verification]
-
-**EXAMPLE - Audio Issues:**
-- ✅ Correct: "Let me check the browser console for audio errors and examine the actual audio data being received"
-- ❌ Incorrect: "The audio format might be wrong, let me create a new endpoint" [making assumptions without verification]
-
----
-
-## Project Overview
-
-Voice Orchestrator is an ultra-low-latency (<500ms) voice assistant that orchestrates Docker containers for speech-to-text, language models, and text-to-speech. The system achieves production-ready performance by orchestrating existing services rather than implementing custom ML code.
+This is **Maestro**, a real-time voice conversation system that orchestrates speech-to-text (STT), large language models (LLM), and text-to-speech (TTS) services. The system is designed for low-latency voice interactions with interrupt capabilities.
 
 ## Architecture
 
-The system uses a streaming pipeline architecture:
-```
-WhisperLive (STT) → Orchestrator → Ollama (LLM) → Kokoro (TTS)
-                         ↓
-                    A-MEM (Memory)
-                    Redis + ChromaDB
-```
+The system follows a **Central Orchestrator Architecture** with these core components:
 
-## Development Commands
+- **Orchestrator** (`orchestrator/src/main.py`): Central coordinator that manages all voice processing streams via WebSocket connections
+- **WhisperLive**: External STT service for real-time speech recognition
+- **Ollama**: LLM service for generating responses  
+- **Kokoro TTS**: Text-to-speech service for audio generation
+- **Terminal Client** (`terminal_client.py`): Test client for voice interaction
+- **Plugin System**: Modular interrupt detection and memory management
 
-### Docker Compose Deployment Options
+### Key Design Patterns
+
+1. **Event-Driven Processing**: Uses `PipelineEventBus` for fire-and-forget event handling
+2. **Session Management**: Each voice session (`StreamSession`) maintains its own state and connections
+3. **Sequential TTS Processing**: Prevents voice "avalanche" through queued sentence processing
+4. **Real-time Interruption**: Voice activity detection allows natural conversation interrupts
+
+## Common Development Commands
+
+### Build and Deployment
 ```bash
-# GPU-accelerated deployment (default)
-docker-compose up -d
+# Build with no cache (required after changes)
+docker-compose build --no-cache
 
-# CPU-only deployment
-docker-compose -f docker-compose.cpu.yml up -d
+# Start basic services
+docker-compose up
 
-# With memory components (Redis, ChromaDB, A-MEM)
-docker-compose -f docker-compose.yml -f docker-compose.memory.yml up -d
+# Start with memory services enabled  
+docker-compose --profile with-memory up
 
-# Quick start with prerequisites check
-./scripts/quick-start.sh
+# Run terminal test client
+python terminal_client.py
 ```
 
-### Testing
+### Development
 ```bash
-# End-to-end latency testing
-python scripts/latency-test.py
+# View orchestrator logs
+docker-compose logs -f orchestrator
 
-# Health check all services
-./scripts/health-check.sh
+# Debug active sessions
+curl http://localhost:8000/debug/sessions
 
-# Individual service health
-curl http://localhost:8000/health    # Orchestrator
-curl http://localhost:9090/health    # WhisperLive
-curl http://localhost:8880/health    # Kokoro TTS
+# Health check
+curl http://localhost:8000/health
 ```
 
-### Prerequisites
-- Ollama running on port 11434 with models:
-  ```bash
-  ollama pull gemma3n:latest
-  ollama pull nomic-embed-text
-  ```
-- Docker with GPU support (NVIDIA runtime)
-- Copy `.env.example` to `.env` and configure
+## Key Configuration
 
-## Key Components
+Configuration is centralized in `orchestrator/src/config.py` and controlled via environment variables in `docker-compose.yml`:
 
-### Orchestrator Service (`orchestrator/`)
-- FastAPI backend with WebSocket support
-- Routes audio between STT, LLM, and TTS services
-- Handles memory integration (optional)
-- Built with Python 3.11-slim container
+**Critical Settings:**
+- `STT_MODEL`: Whisper model size (tiny/small/base)
+- `LLM_MODEL`: Ollama model name
+- `TTS_VOICE`: Voice name for Kokoro TTS
+- `CHUNK_SIZE`: Audio processing chunk size (256 bytes)
+- `NO_SPEECH_THRESHOLD`: Voice activity detection threshold
 
-### Frontend UI (`ui/`)
-- Next.js 14 PWA with push-to-talk interface
-- WebSocket connection for real-time audio streaming
-- React 18+ with TypeScript
-- Build commands: `npm run dev`, `npm run build`, `npm start`
+## Core Components
 
-### Memory Components (Optional)
-- A-MEM: Agentic memory service
-- Redis: Session caching
-- ChromaDB: Vector storage for embeddings
-- Enabled via `MEMORY_ENABLED=true` environment variable
+### Orchestrator (orchestrator/src/main.py)
 
-## Performance Requirements
+The main service coordinator with these key responsibilities:
+- **WebSocket Management**: `/ws/voice` endpoint for frontend connections
+- **WhisperLive Integration**: Real-time STT via WebSocket to port 9090
+- **Session Management**: Creates/manages `StreamSession` objects
+- **Interrupt Handling**: `interrupt_session()` method stops TTS/processing
+- **Event Bus**: Fire-and-forget event processing for low latency
 
-Target latency budget:
-- Audio capture: 16ms
-- STT (WhisperLive): 120ms  
-- LLM (Ollama): 180ms
-- TTS (Kokoro): 80ms
-- Network overhead: 12ms
-- **Total: 408ms** (< 500ms target)
+### Plugin System (orchestrator/src/plugins/)
 
-## Configuration
+Modular plugin architecture:
+- **InterruptPlugin**: Voice activity detection during TTS playback
+- **MemoryPlugin**: Session memory and context management  
+- **SpeakerPlugin**: Speaker identification and voice processing
+- **BasePlugin**: Abstract plugin interface with async lifecycle
 
-All configuration via environment variables in `.env`:
-- Core services: `WHISPER_URL`, `OLLAMA_URL`, `TTS_URL`
-- Models: `STT_MODEL=tiny`, `LLM_MODEL=gemma3n:latest`, `TTS_VOICE=af_bella`
-- Memory: `MEMORY_ENABLED=false`, `AMEM_URL`, `REDIS_URL`
-- Performance: `CHUNK_SIZE_MS=320`, `TARGET_LATENCY_MS=500`
+### Terminal Client (terminal_client.py)
 
-## Project Structure
+Testing client that demonstrates the audio pipeline:
+- Records from microphone (16kHz Float32)
+- Sends raw audio to orchestrator via WebSocket
+- Plays back TTS audio responses
+- Supports real-time interruption with 'i' key
 
-```
-/docs/               # Implementation guides and architecture docs
-/orchestrator/src/   # FastAPI backend service
-/ui/                 # Next.js frontend application
-/scripts/            # Deployment and testing scripts
-/data/               # Persistent data volumes (Redis, ChromaDB)
-```
+## Audio Processing Pipeline
 
-The `/docs/` directory contains detailed implementation tasks for backend, frontend, DevOps, and testing components.
+1. **Audio Capture**: 16kHz Float32 format, 256-byte chunks
+2. **STT Processing**: Forward to WhisperLive via WebSocket
+3. **Transcript Processing**: Complete sentences trigger LLM processing  
+4. **LLM Streaming**: Ollama generates streaming responses
+5. **TTS Generation**: Kokoro converts text to audio
+6. **Sequential Playback**: Prevents audio overlap through queuing
 
-## Available MCP Tools
+## Interrupt System
 
-### **MANDATORY: Codebase Analysis - Deep Graph MCP**
-Use **Deepgraph** for understanding large codebases, analyzing dependencies, and mapping code relationships. **REQUIRED before any integration work** to examine actual implementations rather than making assumptions.
+The system supports natural conversation interrupts:
 
-**Available Repositories (EXAMINE BEFORE CODING):**
-- `collabora/WhisperLive` - Speech-to-text WebSocket service
-- `ollama/ollama` - Language model API server  
-- `thewh1teagle/kokoro-onnx` - Text-to-speech library
-- `remsky/Kokoro-FastAPI` - Kokoro TTS web service wrapper
+1. **Voice Detection**: InterruptPlugin monitors audio levels during TTS
+2. **Immediate Abort**: `interrupt_session()` stops TTS and clears queues
+3. **State Recovery**: Session remains active for continued conversation
+4. **Event Propagation**: Interrupt events notify all plugins
 
-**Key Commands:**
-- `mcp__Deep_Graph_MCP__folder-tree-structure`: Explore repository structure
-- `mcp__Deep_Graph_MCP__nodes-semantic-search`: Search for functionality by description
-- `mcp__Deep_Graph_MCP__get-code`: Get actual implementation code
-- `mcp__Deep_Graph_MCP__find-direct-connections`: Analyze dependencies
-- `mcp__Deep_Graph_MCP__docs-semantic-search`: Search documentation
-- `mcp__Deep_Graph_MCP__get-usage-dependency-links`: Impact analysis
+## Testing and Debugging
 
-**MANDATORY WORKFLOW EXAMPLE:**
-```
-1. mcp__Deep_Graph_MCP__nodes-semantic-search: "WebSocket protocol WhisperLive"
-2. mcp__Deep_Graph_MCP__get-code: [examine actual implementation]
-3. Implement based on verified protocol, not assumptions
+### Running Tests
+Use the terminal client for end-to-end testing:
+```bash
+python terminal_client.py
+# Press SPACE to toggle recording
+# Press 'i' to send interrupt
+# Press 'q' to quit
 ```
 
-### Git Workflow - Vibe Git MCP
-Advanced git workflow management with auto-commit functionality for clean development history.
+### Debugging Audio Issues
+- Check `orchestrator/src/main.py:765-812` for detailed audio logging
+- Audio stats logged: min/max/mean/std of audio samples
+- Binary debug info shows raw WebSocket data format
+- Terminal client logs audio levels in real-time
 
-**Key Commands:**
-- `mcp__vibe-git__start_vibing`: Start auto-committing session (call first before code changes)
-- `mcp__vibe-git__stop_vibing`: Complete session with squashed commit and PR creation
-- `mcp__vibe-git__vibe_status`: Check current session status
-- `mcp__vibe-git__stash_and_vibe`: Stash changes and start fresh session
-- `mcp__vibe-git__commit_and_vibe`: Commit work-in-progress and start new session
-- `mcp__vibe-git__vibe_from_here`: Continue vibing from current state
+### Common Issues
+- **WhisperLive Connection**: Check `WHISPER_URL` environment variable
+- **Audio Format**: Must be 16kHz Float32, 256-byte chunks
+- **TTS Timeout**: Increase `TTS_TIMEOUT` if Kokoro is slow
+- **Memory Leaks**: Monitor `docker-compose logs orchestrator` for session cleanup
 
-### Additional MCP Tools
-- **Sequential Thinking MCP**: For complex problem-solving and multi-step analysis (highly recommended)
-- **MCP Resource Tools**: List and read resources from configured servers
+## Important Notes
 
-## TECHNICAL IMPLEMENTATION STANDARDS
-
-### Integration Requirements
-**Before implementing any service integration:**
-
-1. **Use MCP Deep Graph to examine target service source code**
-2. **Verify actual WebSocket/API protocols from source**
-3. **Test with real service endpoints, not mock implementations**
-4. **Document verified protocol details with source code references**
-
-### Code Quality Standards
-- All WebSocket implementations must be based on verified protocols from target services
-- Audio format conversions must match actual service requirements (verified from source)
-- Error handling must account for real service failure modes (not generic assumptions)
-- Performance optimizations must be based on measured latencies with real services
-
-### Testing Requirements
-- Integration tests must use actual Docker services, not mocks
-- Latency measurements must be end-to-end with real services
-- WebSocket connection handling must be tested with actual target services
-- Audio pipeline testing must use real STT/TTS services
-
-## Development Log
-
-**Important:** Always maintain a log of changes, implementation decisions, and results in `DEVELOPMENT_LOG.md` for future Claude instances to reference. This ensures continuity and helps track what has been built, tested, and what issues were encountered.
-
-### Log Management
-- Create/update `DEVELOPMENT_LOG.md` after each significant change
-- Document implementation decisions and rationale
-- **Record actual source code references and protocol verifications**
-- Record test results and performance measurements
-- Note any blockers or issues encountered
-- Track which components are complete vs. in-progress
-- **Include URLs and specific code references for all integrations**
-
-### Verification Documentation Required
-For each integration, document:
-- Source repository and specific files examined
-- Actual protocol/API details found in source code
-- Any assumptions that had to be made (and why verification failed)
-- Test results with real services
-- Performance measurements and optimizations applied
-
+- The system requires GPU support for WhisperLive and Kokoro TTS services
+- Audio processing is extremely sensitive to format - Float32 16kHz only
+- Plugin events use fire-and-forget pattern for minimal latency impact
+- Session cleanup happens automatically after 1 hour of inactivity
+- All processing is designed to be interruptible for natural conversation flow

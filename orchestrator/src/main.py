@@ -356,7 +356,8 @@ class VoiceStreamOrchestrator:
                 interrupt_plugin = InterruptPlugin(interrupt_config)
                 interrupt_plugin.orchestrator = self  # Pass orchestrator reference
                 self.plugin_manager.register_plugin(interrupt_plugin)
-                logger.info("Interrupt plugin registered")
+                logger.info(f"✅ Interrupt plugin registered with orchestrator reference: {id(self)}")
+                logger.info(f"🔍 [INTERRUPT_DEBUG] InterruptPlugin.orchestrator = {id(interrupt_plugin.orchestrator)}")
             else:
                 logger.warning("InterruptPlugin not available - automatic interruption disabled")
             
@@ -472,12 +473,12 @@ class VoiceStreamOrchestrator:
                     "task": "transcribe",
                     "model": config.STT_MODEL,
                     "use_vad": config.VAD_ENABLED,
-                    "max_clients": 4,
-                    "max_connection_time": 3600,
-                    "send_last_n_segments": 10,
+                    "max_clients": config.WHISPER_MAX_CLIENTS,
+                    "max_connection_time": config.WHISPER_MAX_CONNECTION_TIME,
+                    "send_last_n_segments": config.WHISPER_SEND_LAST_N_SEGMENTS,
                     "no_speech_thresh": config.NO_SPEECH_THRESHOLD,
-                    "clip_audio": False,
-                    "same_output_threshold": 10
+                    "clip_audio": config.WHISPER_CLIP_AUDIO,
+                    "same_output_threshold": config.WHISPER_SAME_OUTPUT_THRESHOLD
                 }
                 
                 logger.info(f"📤 Sending config to WhisperLive: {config_message}")
@@ -697,11 +698,14 @@ class VoiceStreamOrchestrator:
                 
     async def send_audio_to_whisper(self, session_id: str, audio_data: bytes):
         """Forward audio data to WhisperLive with connection validation"""
+        logger.debug(f"🔥 [AUDIO_DEBUG] send_audio_to_whisper CALLED: session={session_id}, data_len={len(audio_data)}")
+        
         if session_id not in self.sessions:
             logger.warning(f"❌ Session {session_id} not found")
             return False
             
         session = self.sessions[session_id]
+        logger.debug(f"🔥 [AUDIO_DEBUG] Session found: tts_active={session.tts_active}, is_processing={session.is_processing}")
         
         # Check connection health
         if not session.whisper_connected or not session.whisper_ws or not self._is_websocket_connected(session.whisper_ws):
@@ -757,15 +761,54 @@ class VoiceStreamOrchestrator:
             # logger.info(f"✅ Successfully sent audio to WhisperLive for session {session_id}")
             
             # Emit plugin events for audio data
-            import numpy as np
-            # Audio data is now Float32Array format (not int16)
-            audio_array = np.frombuffer(audio_data, dtype=np.float32)
-            current_time = time.time()
-            
-            # Calculate audio level for monitoring
-            audio_level = np.abs(audio_array).mean()
-            voice_threshold = 0.01  # Adjust based on testing
-            voice_detected = audio_level > voice_threshold
+            logger.debug(f"🔥 [AUDIO_DEBUG] Starting audio processing for session {session_id}")
+            try:
+                import numpy as np
+                
+                # CRITICAL BINARY DEBUG: Log raw WebSocket data for comparison with terminal client
+                logger.info(f"🔥 [BINARY_DEBUG] RAW WEBSOCKET DATA: {len(audio_data)} bytes, type={type(audio_data)}")
+                if len(audio_data) >= 16:
+                    logger.info(f"🔥 [BINARY_DEBUG] First 16 bytes (hex): {audio_data[:16].hex()}")
+                    # Try to interpret as Float32 like terminal client does
+                    import struct
+                    try:
+                        first_samples = struct.unpack('<ffff', audio_data[:16])
+                        logger.info(f"🔥 [BINARY_DEBUG] First 4 samples as Float32: {first_samples}")
+                    except struct.error as e:
+                        logger.error(f"🔥 [BINARY_DEBUG] Cannot unpack as Float32: {e}")
+                
+                # Audio data is now Float32Array format (not int16)
+                logger.debug(f"🔥 [AUDIO_DEBUG] Creating numpy array from {len(audio_data)} bytes")
+                audio_array = np.frombuffer(audio_data, dtype=np.float32)
+                logger.debug(f"🔥 [AUDIO_DEBUG] Numpy array created: shape={audio_array.shape}, dtype={audio_array.dtype}")
+                
+                # CRITICAL DEBUG: Log numpy array stats for comparison
+                logger.info(f"🔥 [BINARY_DEBUG] NUMPY STATS: min={audio_array.min():.6f}, max={audio_array.max():.6f}, mean={audio_array.mean():.6f}, std={audio_array.std():.6f}")
+                
+                current_time = time.time()
+                
+                # Calculate audio level for monitoring
+                audio_level = np.abs(audio_array).mean()
+                voice_threshold = 0.015  # Match interrupt plugin threshold for consistent detection
+                voice_detected = audio_level > voice_threshold
+                
+                logger.info(f"🔥 [AUDIO_DEBUG] CALCULATED: audio_level={audio_level:.6f}, voice_detected={voice_detected}, threshold={voice_threshold}, tts_active={session.tts_active}")
+                
+                # CRITICAL DEBUG: Log when audio stops being processed
+                if audio_level < 0.000001:
+                    logger.error(f"🚨 [CRITICAL] AUDIO LEVEL IS ZERO! session={session_id}, tts_active={session.tts_active}, is_processing={session.is_processing}")
+                elif audio_level > 0.01:
+                    logger.info(f"🎤 [CRITICAL] STRONG AUDIO DETECTED! level={audio_level:.6f}, tts_active={session.tts_active}")
+                
+            except Exception as e:
+                logger.error(f"🔥 [AUDIO_DEBUG] ERROR in audio processing: {e}")
+                logger.error(f"🔥 [AUDIO_DEBUG] Audio data type: {type(audio_data)}, length: {len(audio_data)}")
+                if len(audio_data) > 0:
+                    logger.error(f"🔥 [AUDIO_DEBUG] First 16 bytes: {audio_data[:16].hex()}")
+                # Use fallback values
+                audio_level = 0.0
+                voice_detected = False
+                current_time = time.time()
             
             # Emit standard audio_data event
             await self.plugin_manager.emit_event("audio_data", {
@@ -786,15 +829,21 @@ class VoiceStreamOrchestrator:
             })
             
             # If voice detected during TTS, emit potential interrupt event
+            logger.debug(f"🔥 [AUDIO_DEBUG] Checking interrupt conditions: voice_detected={voice_detected}, tts_active={session.tts_active}")
             if voice_detected and session.tts_active:
                 logger.info(f"🗣️ [INTERRUPT_DEBUG] Voice detected during TTS for session {session_id}, audio level: {audio_level}")
                 logger.info(f"🗣️ [INTERRUPT_DEBUG] Session state: is_processing={session.is_processing}, tts_active={session.tts_active}")
+                logger.info(f"🔥 [AUDIO_DEBUG] EMITTING voice_during_tts event NOW!")
                 await session.event_bus.emit("voice_during_tts", {
                     "session_id": session_id,
                     "audio_level": float(audio_level),
                     "timestamp": current_time
                 })
                 logger.info(f"🗣️ [INTERRUPT_DEBUG] voice_during_tts event emitted")
+            elif voice_detected:
+                logger.info(f"🔥 [AUDIO_DEBUG] Voice detected but NOT during TTS: tts_active={session.tts_active}")
+            elif session.tts_active:
+                logger.debug(f"🔥 [AUDIO_DEBUG] TTS active but no voice: level={audio_level:.6f} <= {voice_threshold}")
             
             return True
         except websockets.exceptions.ConnectionClosed:
@@ -1083,6 +1132,7 @@ class VoiceStreamOrchestrator:
                     try:
                         session.tts_active = True
                         session.tts_start_time = time.time()  # Track when TTS started for trailing audio protection
+                        logger.info(f"🔍 [INTERRUPT_DEBUG] 🔊 TTS ACTIVATED for session {session.session_id}, sequence {sequence}")
                         
                         # Create client and track it for cancellation
                         client = httpx.AsyncClient(timeout=config.TTS_TIMEOUT)
@@ -1159,6 +1209,7 @@ class VoiceStreamOrchestrator:
                         logger.error(f"TTS error for session {session.session_id}, sequence {sequence}: {e}")
                     finally:
                         session.tts_active = False
+                        logger.info(f"🔍 [INTERRUPT_DEBUG] 🔇 TTS DEACTIVATED for session {session.session_id}, sequence {sequence}")
                     
                     # Small delay to prevent overwhelming the system while maintaining low latency
                     # Also check for interruption during delay
@@ -1239,6 +1290,7 @@ class VoiceStreamOrchestrator:
             
         try:
             session.tts_active = True
+            logger.info(f"🔍 [INTERRUPT_DEBUG] 🔊 TTS ACTIVATED (direct) for session {session.session_id}")
             
             # Generate TTS audio
             async with httpx.AsyncClient(timeout=config.TTS_TIMEOUT) as client:
@@ -1273,6 +1325,7 @@ class VoiceStreamOrchestrator:
             logger.error(f"TTS error for session {session.session_id}: {e}")
         finally:
             session.tts_active = False
+            logger.info(f"🔍 [INTERRUPT_DEBUG] 🔇 TTS DEACTIVATED (direct) for session {session.session_id}")
 
     async def _send_to_frontend(self, session: StreamSession, message: dict):
         """Send message to frontend WebSocket"""
@@ -1326,6 +1379,7 @@ class VoiceStreamOrchestrator:
         was_tts_active = session.tts_active
         session.is_processing = False
         session.tts_active = False
+        logger.info(f"🔍 [INTERRUPT_DEBUG] 🔇 TTS DEACTIVATED (interrupt) for session {session_id}")
         session.processing_text = None  # Clear the processing text on interrupt
         logger.info(f"🛑 [INTERRUPT_DEBUG] Step 3: State reset - was_processing={was_processing}, was_tts_active={was_tts_active}")
         
@@ -1460,89 +1514,6 @@ class VoiceStreamOrchestrator:
 orchestrator = VoiceStreamOrchestrator()
 
 
-# WebSocket endpoint for frontend connections
-@app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    """Single WebSocket endpoint for all voice interactions"""
-    await websocket.accept()
-    logger.info(f"🎯 Frontend WebSocket connected for session {session_id}")
-    
-    try:
-        # Create or get session
-        session = await orchestrator.create_session(session_id)
-        session.frontend_ws = websocket
-        
-        # Send ready signal
-        await websocket.send_text(json.dumps({
-            "type": "ready",
-            "session_id": session_id
-        }))
-        
-        # Handle incoming frontend messages
-        while True:
-            # Correct pattern for FastAPI WebSocket - use receive()
-            message = await websocket.receive()
-            # logger.info(f"📥 Received frontend message: {message}")
-            
-            try:
-                if message["type"] == "websocket.receive":
-                    if "bytes" in message:
-                        # Audio data - forward to WhisperLive
-                        audio_bytes = message["bytes"]
-                        # logger.info(f"🎤 Received {len(audio_bytes)} bytes of audio data from frontend")
-                        
-                        # DETAILED LOGGING FOR AUDIO DATA FORMAT DEBUGGING
-                        # logger.debug(f"🔍 WebSocket message type: {message['type']}")
-                        # logger.debug(f"🔍 WebSocket message keys: {list(message.keys())}")
-                        # logger.debug(f"🔍 Raw audio_bytes type: {type(audio_bytes)}")
-                        # logger.debug(f"🔍 Raw audio_bytes repr: {repr(audio_bytes)}")
-                        
-                        # Log audio data format for debugging
-                        if len(audio_bytes) >= 4:
-                            # Check if it's float32 by looking at the first few bytes
-                            import struct
-                            try:
-                                first_sample = struct.unpack('<f', audio_bytes[:4])[0]
-                                # logger.debug(f"📊 Audio data format check - first sample: {first_sample}")
-                            except:
-                                logger.debug(f"📊 Audio data format - raw bytes: {audio_bytes[:16].hex()}")
-                        
-                        success = await orchestrator.send_audio_to_whisper(session_id, audio_bytes)
-                        if not success:
-                            logger.error(f"❌ Failed to send audio to WhisperLive")
-                         
-                    elif "text" in message:
-                        data = json.loads(message["text"])
-                        logger.info(f"💬 Received text message: {data}")
-                        
-                        if data.get("type") == "interrupt":
-                            logger.info(f"🛑 Interrupt requested for session {session_id}")
-                            await orchestrator.interrupt_session(session_id)
-                            
-                        elif data.get("type") == "end_audio":
-                            logger.info(f"🔚 End of audio signal received for session {session_id}")
-                            # Forward end signal to WhisperLive
-                            if session.whisper_ws:
-                                await session.whisper_ws.send("END_OF_AUDIO")
-                                
-                elif message["type"] == "websocket.disconnect":
-                    logger.info(f"Frontend WebSocket disconnect message received for session {session_id}")
-                    break
-                    
-            except json.JSONDecodeError:
-                logger.warning(f"Invalid JSON from frontend: {message}")
-            except Exception as e:
-                logger.error(f"Error handling frontend message: {e}")
-                
-    except WebSocketDisconnect:
-        logger.info(f"Frontend WebSocket disconnected for session {session_id}")
-    except Exception as e:
-        logger.error(f"WebSocket error for session {session_id}: {e}")
-    finally:
-        if session_id in orchestrator.sessions:
-            orchestrator.sessions[session_id].frontend_ws = None
-
-
 # Ultra-fast WebSocket endpoint for voice processing
 @app.websocket("/ws/voice")
 async def websocket_voice_endpoint(websocket: WebSocket):
@@ -1609,7 +1580,9 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                         if len(audio_bytes) >= 16:
                             logger.debug(f"🔍 First 16 bytes (hex): {audio_bytes[:16].hex()}")
                         
-                        await orchestrator.send_audio_to_whisper(session_id, audio_bytes)
+                        logger.debug(f"🔥 [AUDIO_DEBUG] WebSocket calling send_audio_to_whisper for session {session_id}")
+                        result = await orchestrator.send_audio_to_whisper(session_id, audio_bytes)
+                        logger.debug(f"🔥 [AUDIO_DEBUG] send_audio_to_whisper returned: {result}")
                         
                     elif "text" in message:
                         data = json.loads(message["text"])
