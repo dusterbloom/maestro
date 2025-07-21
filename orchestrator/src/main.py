@@ -215,7 +215,7 @@ class StreamSession:
                 timestamp=time.time(),
                 data={"text": text}
             )
-            await self.event_bus.publish("maestro:global", event)
+            await self.event_bus.emit(event.event_type, event.session_id, event.data)
         except Exception as e:
             logger.error(f"Error in ultra-fast processing for session {self.session_id}: {e}")
 
@@ -340,7 +340,9 @@ class VoiceStreamOrchestrator:
             
             # Initialize service coordinator
             self.service_coordinator = ServiceCoordinator("orchestrator")
-            await self.service_coordinator.initialize(self.event_bus)
+            # Inject the event bus directly instead of using get_event_bus
+            self.service_coordinator.event_bus = self.event_bus
+            await self.service_coordinator.initialize()
             
             logger.info("✅ Distributed systems initialized successfully")
         except Exception as e:
@@ -413,10 +415,10 @@ class VoiceStreamOrchestrator:
             
             if interrupt_plugin and session.event_bus:
                 # Register InterruptPlugin event handlers with distributed event bus
-                await session.event_bus.subscribe(f"maestro:session:{session_id}", interrupt_plugin._handle_audio_monitor)
-                await session.event_bus.subscribe(f"maestro:session:{session_id}", interrupt_plugin._handle_voice_during_tts)
-                await session.event_bus.subscribe(f"maestro:interrupt", interrupt_plugin._handle_interrupted)
-                await session.event_bus.subscribe(f"maestro:session:{session_id}", interrupt_plugin._handle_processing_complete)
+                session.event_bus.on("audio_monitor", interrupt_plugin._handle_audio_monitor)
+                session.event_bus.on("voice_during_tts", interrupt_plugin._handle_voice_during_tts)
+                session.event_bus.on("interrupted", interrupt_plugin._handle_interrupted)
+                session.event_bus.on("processing_complete", interrupt_plugin._handle_processing_complete)
                 logger.info(f"🛑 InterruptPlugin connected to session {session_id} distributed event bus")
             else:
                 logger.warning(f"⚠️ InterruptPlugin not found or event bus not initialized for session {session_id}")
@@ -679,14 +681,11 @@ class VoiceStreamOrchestrator:
                 
     async def send_audio_to_whisper(self, session_id: str, audio_data: bytes):
         """Forward audio data to WhisperLive with connection validation"""
-        logger.debug(f"🔥 [AUDIO_DEBUG] send_audio_to_whisper CALLED: session={session_id}, data_len={len(audio_data)}")
-        
         if session_id not in self.sessions:
             logger.warning(f"❌ Session {session_id} not found")
             return False
             
         session = self.sessions[session_id]
-        logger.debug(f"🔥 [AUDIO_DEBUG] Session found: tts_active={session.tts_active}, is_processing={session.is_processing}")
         
         # Check connection health
         if not session.whisper_connected or not session.whisper_ws or not self._is_websocket_connected(session.whisper_ws):
@@ -745,27 +744,7 @@ class VoiceStreamOrchestrator:
             logger.debug(f"🔥 [AUDIO_DEBUG] Starting audio processing for session {session_id}")
             try:
                 import numpy as np
-                
-                # CRITICAL BINARY DEBUG: Log raw WebSocket data for comparison with terminal client
-                logger.info(f"🔥 [BINARY_DEBUG] RAW WEBSOCKET DATA: {len(audio_data)} bytes, type={type(audio_data)}")
-                if len(audio_data) >= 16:
-                    logger.info(f"🔥 [BINARY_DEBUG] First 16 bytes (hex): {audio_data[:16].hex()}")
-                    # Try to interpret as Float32 like terminal client does
-                    import struct
-                    try:
-                        first_samples = struct.unpack('<ffff', audio_data[:16])
-                        logger.info(f"🔥 [BINARY_DEBUG] First 4 samples as Float32: {first_samples}")
-                    except struct.error as e:
-                        logger.error(f"🔥 [BINARY_DEBUG] Cannot unpack as Float32: {e}")
-                
-                # Audio data is now Float32Array format (not int16)
-                logger.debug(f"🔥 [AUDIO_DEBUG] Creating numpy array from {len(audio_data)} bytes")
                 audio_array = np.frombuffer(audio_data, dtype=np.float32)
-                logger.debug(f"🔥 [AUDIO_DEBUG] Numpy array created: shape={audio_array.shape}, dtype={audio_array.dtype}")
-                
-                # CRITICAL DEBUG: Log numpy array stats for comparison
-                logger.info(f"🔥 [BINARY_DEBUG] NUMPY STATS: min={audio_array.min():.6f}, max={audio_array.max():.6f}, mean={audio_array.mean():.6f}, std={audio_array.std():.6f}")
-                
                 current_time = time.time()
                 
                 # Calculate audio level for monitoring
@@ -773,19 +752,14 @@ class VoiceStreamOrchestrator:
                 voice_threshold = 0.015  # Match interrupt plugin threshold for consistent detection
                 voice_detected = audio_level > voice_threshold
                 
-                logger.info(f"🔥 [AUDIO_DEBUG] CALCULATED: audio_level={audio_level:.6f}, voice_detected={voice_detected}, threshold={voice_threshold}, tts_active={session.tts_active}")
-                
-                # CRITICAL DEBUG: Log when audio stops being processed
-                if audio_level < 0.000001:
-                    logger.error(f"🚨 [CRITICAL] AUDIO LEVEL IS ZERO! session={session_id}, tts_active={session.tts_active}, is_processing={session.is_processing}")
-                elif audio_level > 0.01:
-                    logger.info(f"🎤 [CRITICAL] STRONG AUDIO DETECTED! level={audio_level:.6f}, tts_active={session.tts_active}")
+                # Only log significant audio events
+                if audio_level < 0.000001 and session.tts_active:
+                    logger.warning(f"🔇 No audio during TTS session={session_id}")
+                elif audio_level > 0.01 and session.tts_active:
+                    logger.info(f"🎤 Voice during TTS level={audio_level:.3f}")
                 
             except Exception as e:
-                logger.error(f"🔥 [AUDIO_DEBUG] ERROR in audio processing: {e}")
-                logger.error(f"🔥 [AUDIO_DEBUG] Audio data type: {type(audio_data)}, length: {len(audio_data)}")
-                if len(audio_data) > 0:
-                    logger.error(f"🔥 [AUDIO_DEBUG] First 16 bytes: {audio_data[:16].hex()}")
+                logger.error(f"❌ Audio processing error: {e}")
                 # Use fallback values
                 audio_level = 0.0
                 voice_detected = False
@@ -813,14 +787,11 @@ class VoiceStreamOrchestrator:
                         "tts_active": session.tts_active
                     }
                 )
-                await session.event_bus.publish(f"maestro:session:{session_id}", event)
+                asyncio.create_task(session.event_bus.emit(event.event_type, event.session_id, event.data))
             
             # If voice detected during TTS, emit potential interrupt event
-            logger.debug(f"🔥 [AUDIO_DEBUG] Checking interrupt conditions: voice_detected={voice_detected}, tts_active={session.tts_active}")
             if voice_detected and session.tts_active:
-                logger.info(f"🗣️ [INTERRUPT_DEBUG] Voice detected during TTS for session {session_id}, audio level: {audio_level}")
-                logger.info(f"🗣️ [INTERRUPT_DEBUG] Session state: is_processing={session.is_processing}, tts_active={session.tts_active}")
-                logger.info(f"🔥 [AUDIO_DEBUG] EMITTING voice_during_tts event NOW!")
+                logger.info(f"🗣️ Voice interrupt detected level={audio_level:.3f}")
                 if session.event_bus:
                     event = ServiceEvent(
                         event_type="voice_during_tts",
@@ -831,12 +802,7 @@ class VoiceStreamOrchestrator:
                             "audio_level": float(audio_level)
                         }
                     )
-                    await session.event_bus.publish(f"maestro:session:{session_id}", event)
-                logger.info(f"🗣️ [INTERRUPT_DEBUG] voice_during_tts event emitted")
-            elif voice_detected:
-                logger.info(f"🔥 [AUDIO_DEBUG] Voice detected but NOT during TTS: tts_active={session.tts_active}")
-            elif session.tts_active:
-                logger.debug(f"🔥 [AUDIO_DEBUG] TTS active but no voice: level={audio_level:.6f} <= {voice_threshold}")
+                    asyncio.create_task(session.event_bus.emit(event.event_type, event.session_id, event.data))
             
             return True
         except websockets.exceptions.ConnectionClosed:
@@ -851,8 +817,8 @@ class VoiceStreamOrchestrator:
     async def _process_transcript_segments(self, session: StreamSession, segments):
         """Process transcript segments and trigger LLM+TTS when sentence is complete"""
         session.update_activity()
-        logger.info(f"🎯 [INTERRUPT_DEBUG] Processing transcript segments for session {session.session_id}: {segments}")
-        logger.info(f"🔍 [INTERRUPT_DEBUG] Session state: is_processing={session.is_processing}, tts_active={session.tts_active}, processing_text='{session.processing_text}'")
+        segment_count = len(segments) if segments else 0
+        logger.info(f"📝 Processing {segment_count} transcript segments")
         
         # Find completed segments with event-driven deduplication
         completed_texts = []
@@ -866,7 +832,7 @@ class VoiceStreamOrchestrator:
                     # Event-driven deduplication - check if duplicate
                     if not session.segment_cache.is_duplicate(text, current_time):
                         completed_texts.append(text)
-                        logger.info(f"✅ [INTERRUPT_DEBUG] New completed text found: {text}")
+                        logger.info(f"✅ New transcript: {text}")
                         
                         # Emit segment processed event via distributed event bus (fire-and-forget)
                         if session.event_bus:
@@ -880,9 +846,8 @@ class VoiceStreamOrchestrator:
                                     "segment_hash": session.segment_cache.get_segment_hash(text, current_time)
                                 }
                             )
-                            await session.event_bus.publish(f"maestro:session:{session.session_id}", event)
-                    else:
-                        logger.debug(f"⚠️ [INTERRUPT_DEBUG] Duplicate segment ignored: {text}")
+                            asyncio.create_task(session.event_bus.emit(event.event_type, event.session_id, event.data))
+                    # Duplicate segments are silently ignored
             else:
                 # Incomplete segment for live transcript display
                 if segment.get("text"):
@@ -890,7 +855,6 @@ class VoiceStreamOrchestrator:
         
         # Send live transcript to frontend
         current_transcript = " ".join(current_transcript_parts).strip()
-        logger.info(f"📝 [INTERRUPT_DEBUG] Current live transcript: {current_transcript}")
         
         if current_transcript != session.current_transcript:
             session.current_transcript = current_transcript
@@ -907,47 +871,19 @@ class VoiceStreamOrchestrator:
             })
         
         # Process completed sentences
-        logger.info(f"🔍 [INTERRUPT_DEBUG] Found {len(completed_texts)} completed texts to process")
         for completed_text in completed_texts:
-            # This logic is now much simpler
             if self._is_sentence_complete(completed_text):
                 session.stt_end_time = time.time()
-                logger.info(f"📋 Session {session.session_id}: Processing complete sentence: {completed_text}")
+                logger.info(f"📋 Processing sentence: {completed_text}")
                 
-                await self.plugin_manager.emit_event("transcription_complete", {
-                    "session_id": session.session_id,
-                    "text": completed_text,
-                    "timestamp": time.time(),
-                    "user_id": session.session_id
-                })
-                
-                await self._process_complete_sentence(session, completed_text)
-            else:
-                logger.debug(f"Sentence not complete, skipping: {completed_text}")
-
-
-                        
-            # ALLOW transcript processing during TTS for interrupt detection
-            # Previously blocked, but now needed for human-natural interruption behavior
-            if session.tts_active:
-                logger.info(f"🎤 [INTERRUPT_DEBUG] Session {session.session_id}: Processing transcript during TTS for interrupt: {completed_text}")
-                # Continue processing - don't block
-
-            if self._is_sentence_complete(completed_text):
-                session.stt_end_time = time.time()
-                logger.info(f"📋 [INTERRUPT_DEBUG] Session {session.session_id}: Processing complete sentence: {completed_text}")
-                
-                # Emit plugin events for completed transcription
                 await self.plugin_manager.emit_event("transcription_complete", {
                     "session_id": session.session_id,
                     "text": completed_text,
                     "timestamp": current_time,
-                    "user_id": session.session_id  # Use session_id as user_id for now
+                    "user_id": session.session_id
                 })
                 
                 await self._process_complete_sentence(session, completed_text)
-            else:
-                logger.info(f"📋 [INTERRUPT_DEBUG] Sentence not complete, skipping: {completed_text}")
                 
     def _is_sentence_complete(self, text: str) -> bool:
         """Simple sentence completion check"""
@@ -957,9 +893,10 @@ class VoiceStreamOrchestrator:
         
     async def _process_complete_sentence(self, session: StreamSession, text: str):
         """Process a complete sentence through LLM and TTS pipeline with proper interruption"""
-        logger.info(f"🚀 [INTERRUPT_DEBUG] _process_complete_sentence CALLED for session {session.session_id}")
-        logger.info(f"🚀 [INTERRUPT_DEBUG] Input text: '{text}'")
-        logger.info(f"🚀 [INTERRUPT_DEBUG] Session state: is_processing={session.is_processing}, tts_active={session.tts_active}")
+        # TIMING: Start of complete pipeline
+        pipeline_start = time.time()
+        stt_latency = pipeline_start - session.stt_end_time if hasattr(session, 'stt_end_time') else 0
+        logger.info(f"⏱️ PIPELINE START: '{text[:50]}...' (STT latency: {stt_latency*1000:.0f}ms)")
         
         # IMMEDIATE INTERRUPT: Only interrupt for REAL new speech, not trailing silence
         if session.is_processing or session.tts_active:
@@ -972,29 +909,25 @@ class VoiceStreamOrchestrator:
             min_time_since_start = min(time_since_last_processing, time_since_tts_start) if hasattr(session, 'tts_start_time') else time_since_last_processing
             
             if min_time_since_start < 5.0:
-                logger.info(f"🎤 [INTERRUPT_DEBUG] Ignoring potential trailing audio (only {min_time_since_start:.2f}s since processing/TTS started): '{text}'")
+                logger.info(f"⏭️ Ignoring trailing audio ({min_time_since_start:.1f}s): {text[:30]}...")
                 return
             
-            logger.info(f"🛑 [IMMEDIATE_INTERRUPT] New user input detected during processing/TTS - ABORTING EVERYTHING")
-            logger.info(f"🛑 [IMMEDIATE_INTERRUPT] Previous: processing={session.is_processing}, tts_active={session.tts_active}")
+            logger.info(f"🛑 INTERRUPT: New input during processing - aborting")
             await self.interrupt_session(session.session_id)
-            logger.info(f"🛑 [IMMEDIATE_INTERRUPT] Pipeline cleared, now processing new input: '{text}'")
             
-        logger.info(f"🚀 [INTERRUPT_DEBUG] Setting session.is_processing=True")
         session.is_processing = True
-        session.processing_text = text  # Store the text being processed
-        session.last_processing_start = time.time()  # Track when processing started
+        session.processing_text = text
+        session.last_processing_start = time.time()
         session.total_requests += 1
         
-        # Report state transition to service coordinator
+        # Report state transition to service coordinator (fire-and-forget)
         if session.service_coordinator:
-            await session.service_coordinator.report_state(
+            asyncio.create_task(session.service_coordinator.report_state(
                 session_id=session.session_id,
                 service_type=ServiceType.ORCHESTRATOR,
                 state=ServiceState.THINKING,
                 metadata={"text": text, "request_count": session.total_requests}
-            )
-        logger.info(f"🚀 [INTERRUPT_DEBUG] Session state updated: is_processing={session.is_processing}, processing_text='{session.processing_text}'")
+            ))
         
         try:
             # Clear any previous TTS abort signal and reset sequence
@@ -1015,7 +948,7 @@ class VoiceStreamOrchestrator:
                         "text": text
                     }
                 )
-                await session.event_bus.publish(f"maestro:session:{session.session_id}", event)
+                asyncio.create_task(session.event_bus.emit(event.event_type, event.session_id, event.data))
             
             # Notify frontend that processing started
             await self._send_to_frontend(session, {
@@ -1023,11 +956,14 @@ class VoiceStreamOrchestrator:
                 "text": text
             })
             
+            # TIMING: LLM processing start
+            llm_start_time = time.time()
+            processing_latency = llm_start_time - pipeline_start
+            logger.info(f"⏱️ LLM START: Processing latency {processing_latency*1000:.0f}ms")
+            
             # Generate LLM response with streaming
             full_response = ""
             sentence_buffer = ""
-            
-            llm_start_time = time.time()
             
             # Start LLM streaming
             async for token in self._stream_llm_response(session, text, session.conversation_history, llm_start_time):
@@ -1093,7 +1029,7 @@ class VoiceStreamOrchestrator:
                             "text": text
                         }
                     )
-                    await session.event_bus.publish(f"maestro:session:{session.session_id}", event)
+                    asyncio.create_task(session.event_bus.emit(event.event_type, event.session_id, event.data))
             else:
                 # Completed processing normally
                 if session.event_bus:
@@ -1108,16 +1044,16 @@ class VoiceStreamOrchestrator:
                             "text": text
                         }
                     )
-                    await session.event_bus.publish(f"maestro:session:{session.session_id}", event)
+                    asyncio.create_task(session.event_bus.emit(event.event_type, event.session_id, event.data))
                 
                 # Report state transition to service coordinator
                 if session.service_coordinator:
-                    await session.service_coordinator.report_state(
+                    asyncio.create_task(session.service_coordinator.report_state(
                         session_id=session.session_id,
                         service_type=ServiceType.ORCHESTRATOR,
                         state=ServiceState.IDLE,
                         metadata={"text": text, "completed": True}
-                    )
+                    ))
                 
                 # Only send processing_complete if not interrupted
                 await self._send_to_frontend(session, {
@@ -1127,19 +1063,20 @@ class VoiceStreamOrchestrator:
     async def _queue_sentence_for_tts(self, session: StreamSession, sentence: str):
         """Queue a sentence for sequential TTS processing"""
         if session.tts_abort_event.is_set():
-            logger.info(f"🛑 Session {session.session_id}: TTS queuing skipped due to interruption")
             return
             
         session.tts_sequence_number += 1
         sequence_number = session.tts_sequence_number
         
-        logger.info(f"Session {session.session_id}: Queuing sentence {sequence_number} for TTS: {sentence[:50]}...")
+        # TIMING: TTS queue timing
+        tts_queue_start = time.time()
+        logger.info(f"🎤 TTS Queue #{sequence_number}: {sentence[:40]}...")
         
-        # Add to queue
+        # Add to queue with timing
         session.tts_queue.append({
             "sequence": sequence_number,
             "text": sentence,
-            "queued_at": time.time()
+            "queued_at": tts_queue_start
         })
         
         # Start processing the queue (this will handle sequential processing)
@@ -1161,13 +1098,16 @@ class VoiceStreamOrchestrator:
                     next_item = session.tts_queue.pop(0)
                     sequence = next_item["sequence"]
                     sentence = next_item["text"]
+                    queued_at = next_item["queued_at"]
                     
-                    logger.info(f"Session {session.session_id}: Processing TTS for sequence {sequence}")
+                    # TIMING: TTS processing start
+                    tts_process_start = time.time()
+                    queue_wait = tts_process_start - queued_at
+                    logger.info(f"🔊 TTS #{sequence}: Start (queue wait: {queue_wait*1000:.0f}ms)")
                     
                     try:
                         session.tts_active = True
-                        session.tts_start_time = time.time()  # Track when TTS started for trailing audio protection
-                        logger.info(f"🔍 [INTERRUPT_DEBUG] 🔊 TTS ACTIVATED for session {session.session_id}, sequence {sequence}")
+                        session.tts_start_time = time.time()
                         
                         # Create client and track it for cancellation
                         client = httpx.AsyncClient(timeout=config.TTS_TIMEOUT)
@@ -1181,7 +1121,8 @@ class VoiceStreamOrchestrator:
                                 logger.info(f"🛑 Session {session.session_id}: TTS aborted before HTTP request for sequence {sequence}")
                                 break
                             
-                            tts_start_time = time.time()
+                            # TIMING: TTS request start
+                            tts_request_start = time.time()
                             # Generate TTS audio with cancellation support
                             response = await client.post(
                                 f"{config.TTS_URL}/v1/audio/speech",
@@ -1195,6 +1136,10 @@ class VoiceStreamOrchestrator:
                                     "volume_multiplier": config.TTS_VOLUME
                                 }
                             )
+                            
+                            # TIMING: TTS generation complete
+                            tts_generation_time = time.time() - tts_request_start
+                            logger.info(f"⏱️ TTS #{sequence}: Generated in {tts_generation_time*1000:.0f}ms")
                             
                             # Check for interruption after request completes
                             if session.tts_abort_event.is_set():
@@ -1220,14 +1165,17 @@ class VoiceStreamOrchestrator:
                                         "size_bytes": len(audio_data)
                                     })
                                     
+                                    # Log comprehensive timing for first sentence (most critical)
                                     if sequence == 1 and session.stt_end_time:
                                         total_latency = time.time() - session.stt_end_time
-                                        logger.info(f"PERF: Session {session.session_id}: Total pipeline latency (to first TTS audio): {total_latency:.4f}s")
+                                        logger.info(f"⚡ FIRST AUDIO OUT: {total_latency*1000:.0f}ms (TTS: {tts_generation_time*1000:.0f}ms, Delivery: {audio_delivery_time*1000:.0f}ms)")
                                         session.metrics['total_pipeline_latency'] = total_latency
-
-                                    logger.info(f"Session {session.session_id}: Streamed sentence {sequence}")
+                                        if total_latency > 0.5:
+                                            logger.warning(f"🚨 HIGH LATENCY: {total_latency*1000:.0f}ms exceeds 500ms target")
+                                    else:
+                                        logger.info(f"🎤 Audio #{sequence}: {total_pipeline_time*1000:.0f}ms")
                                 else:
-                                    logger.info(f"🛑 Session {session.session_id}: TTS aborted before streaming sequence {sequence}")
+                                    logger.info(f"🛑 TTS aborted before streaming #{sequence}")
                                     break
                             else:
                                 logger.warning(f"Session {session.session_id}: TTS failed for sequence {sequence}, status: {response.status_code}")
@@ -1330,12 +1278,12 @@ class VoiceStreamOrchestrator:
             
             # Report TTS state to service coordinator
             if session.service_coordinator:
-                await session.service_coordinator.report_state(
+                asyncio.create_task(session.service_coordinator.report_state(
                     session_id=session.session_id,
                     service_type=ServiceType.MOUTH,
                     state=ServiceState.SPEAKING,
                     metadata={"sentence": sentence, "sequence": sequence}
-                )
+                ))
             
             # Generate TTS audio
             async with httpx.AsyncClient(timeout=config.TTS_TIMEOUT) as client:
@@ -1374,12 +1322,12 @@ class VoiceStreamOrchestrator:
             
             # Report TTS completion to service coordinator
             if session.service_coordinator:
-                await session.service_coordinator.report_state(
+                asyncio.create_task(session.service_coordinator.report_state(
                     session_id=session.session_id,
                     service_type=ServiceType.MOUTH,
                     state=ServiceState.IDLE,
                     metadata={"sentence": sentence, "sequence": sequence, "completed": True}
-                )
+                ))
 
     async def _send_to_frontend(self, session: StreamSession, message: dict):
         """Send message to frontend WebSocket"""
@@ -1488,7 +1436,7 @@ class VoiceStreamOrchestrator:
                     "was_tts_active": was_tts_active
                 }
             )
-            await session.event_bus.publish(f"maestro:interrupt", event)
+            asyncio.create_task(session.event_bus.emit(event.event_type, event.session_id, event.data))
         logger.info(f"🛑 [INTERRUPT_DEBUG] Step 6: Interrupt event emitted via session event bus")
         
         # 7. Keep WhisperLive connection open - do NOT disconnect during interrupt
@@ -1622,7 +1570,7 @@ async def websocket_voice_endpoint(websocket: WebSocket):
         
         # Register the handler
         if session.event_bus:
-            await session.event_bus.subscribe("maestro:global", handle_ultra_fast_process)
+            session.event_bus.on("ultra_fast_process", handle_ultra_fast_process)
         
         
         # Send ready signal
@@ -1634,12 +1582,12 @@ async def websocket_voice_endpoint(websocket: WebSocket):
         
         # Report initial listening state to service coordinator
         if session.service_coordinator:
-            await session.service_coordinator.report_state(
+            asyncio.create_task(session.service_coordinator.report_state(
                 session_id=session_id,
                 service_type=ServiceType.ORCHESTRATOR,
                 state=ServiceState.LISTENING,
                 metadata={"ready": True, "mode": "ultra_fast"}
-            )
+            ))
         
         # Handle incoming messages
         while True:

@@ -59,7 +59,8 @@ class ServiceCoordinator:
         
     async def initialize(self):
         """Initialize service coordinator with event bus"""
-        self.event_bus = await get_event_bus(self.service_id)
+        if not self.event_bus:
+            self.event_bus = await get_event_bus(self.service_id)
         
         # Register for coordination events
         self.event_bus.on("service_state_changed", self._handle_state_change)
@@ -239,6 +240,10 @@ class ServiceCoordinator:
                 data={"started_at": mouth_status.last_update}
             )
             
+    async def trigger_interrupt(self, session_id: str, reason: str = "user_interrupt"):
+        """Trigger coordinated interrupt across all services - used by main.py"""
+        await self._coordinate_interrupt(session_id, reason)
+
     async def request_interrupt(self, session_id: str, reason: str = "user_interrupt"):
         """Public API to request session interrupt"""
         await self.event_bus.emit(
@@ -260,6 +265,15 @@ class ServiceCoordinator:
             }
         )
         
+    async def report_state(self, session_id: str, service_type: ServiceType, state: ServiceState, metadata: dict = None):
+        """Report a service state change - simplified interface for main.py"""
+        await self.report_state_change(
+            session_id=session_id,
+            service_type=service_type,
+            new_state=state,
+            metadata=metadata or {}
+        )
+
     async def report_ready(self, session_id: str, service_type: ServiceType):
         """Public API to report service ready state"""
         await self.event_bus.emit(
