@@ -9,7 +9,7 @@ import logging
 import time
 from typing import Dict, Any, Callable, Optional, List
 from dataclasses import dataclass
-import aioredis
+import redis.asyncio as redis
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -33,8 +33,8 @@ class DistributedEventBus:
     
     def __init__(self, service_id: str):
         self.service_id = service_id
-        self.redis: Optional[aioredis.Redis] = None
-        self.pubsub: Optional[aioredis.client.PubSub] = None
+        self.redis: Optional[redis.Redis] = None
+        self.pubsub: Optional[redis.client.PubSub] = None
         self._listeners: Dict[str, List[Callable]] = {}
         self._pending_acks: Dict[str, asyncio.Event] = {}
         self._running = False
@@ -43,7 +43,7 @@ class DistributedEventBus:
     async def initialize(self):
         """Initialize Redis connection and start subscriber"""
         try:
-            self.redis = aioredis.from_url(config.REDIS_URL, decode_responses=True)
+            self.redis = redis.from_url(config.REDIS_URL, decode_responses=True)
             await self.redis.ping()
             logger.info(f"✅ Service {self.service_id}: Connected to Redis event bus")
             

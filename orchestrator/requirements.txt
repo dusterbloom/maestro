@@ -20,5 +20,4 @@ pydantic
 python-json-logger
 
 # --- Distributed System Support ---
-redis
-aioredis
+redis[asyncio]>=5.0.0
