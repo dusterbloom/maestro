@@ -38,22 +38,22 @@
 **Started**: Session 1 (Next)
 **Status**: Ready to begin integration with existing APIs
 
-### 2.1 Orchestrator Integration ⏳ NEXT STEPS
-- ⏳ Modify main.py to use new DistributedEventBus
-- ⏳ Replace broken PipelineEventBus with DistributedEventBus
-- ⏳ Add ServiceCoordinator to existing StreamSession class
-- ⏳ Integrate coordination into existing Ollama/Kokoro/WhisperLive flows
-- ⏳ Update interrupt_session() to use coordinated workflow
+### 2.1 Orchestrator Integration ✅ COMPLETE
+- ✅ Modify main.py to use new DistributedEventBus
+- ✅ Replace broken PipelineEventBus with DistributedEventBus
+- ✅ Add ServiceCoordinator to existing StreamSession class
+- ✅ Integrate coordination into existing Ollama/Kokoro/WhisperLive flows
+- ✅ Update interrupt_session() to use coordinated workflow
 
-### 2.2 Service Coordination Integration ⏳
-- ⏳ Add state reporting to existing audio processing
-- ⏳ Add state reporting to existing LLM streaming  
-- ⏳ Add state reporting to existing TTS processing
-- ⏳ Implement coordinated interrupt in existing flows
-- ⏳ Add buffer flush coordination
+### 2.2 Service Coordination Integration ✅ COMPLETE
+- ✅ Add state reporting to existing audio processing
+- ✅ Add state reporting to existing LLM streaming  
+- ✅ Add state reporting to existing TTS processing
+- ✅ Implement coordinated interrupt in existing flows
+- ✅ Add buffer flush coordination
 
-### 2.3 Testing & Validation ⏳
-- ⏳ Test with existing terminal_client.py
+### 2.3 Testing & Validation 🔄 IN PROGRESS
+- 🔄 Test with existing terminal_client.py
 - ⏳ Validate interrupt coordination works
 - ⏳ Test state transitions and recovery
 - ⏳ Performance testing of Redis coordination

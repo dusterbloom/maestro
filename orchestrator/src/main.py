@@ -20,6 +20,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from config import config
 from plugins import PluginManager, MemoryPlugin, SpeakerPlugin
+from event_bus import DistributedEventBus, ServiceEvent
+from service_coordinator import ServiceCoordinator, ServiceState, ServiceType
 try:
     from plugins.interrupt_plugin import InterruptPlugin
     INTERRUPT_PLUGIN_AVAILABLE = True
@@ -58,60 +60,7 @@ def handle_async_exception(loop, context):
 # Set async exception handler (will be set on the event loop when it's created)
 # asyncio.set_exception_handler(handle_async_exception) - This doesn't exist, need to set on loop
 
-class PipelineEventBus:
-    """
-    Fire-and-forget event bus for ultra-fast pipeline processing
-    """
-    def __init__(self):
-        self._listeners: Dict[str, list[Callable]] = {}
-        self._logger = logging.getLogger(__name__ + ".PipelineEventBus")
-        
-    def on(self, event_type: str, callback: Callable):
-        """Register an event listener"""
-        if event_type not in self._listeners:
-            self._listeners[event_type] = []
-        self._listeners[event_type].append(callback)
-        
-    def off(self, event_type: str, callback: Callable):
-        """Remove an event listener"""
-        if event_type in self._listeners:
-            try:
-                self._listeners[event_type].remove(callback)
-            except ValueError:
-                pass
-                
-    async def emit(self, event_type: str, data: Any = None):
-        """Fire-and-forget event emission"""
-        if event_type not in self._listeners:
-            return
-            
-        # Create tasks for all listeners without waiting
-        tasks = []
-        for callback in self._listeners[event_type]:
-            try:
-                if asyncio.iscoroutinefunction(callback):
-                    task = asyncio.create_task(callback(data))
-                else:
-                    # Handle sync callbacks
-                    task = asyncio.create_task(asyncio.to_thread(callback, data))
-                tasks.append(task)
-            except Exception as e:
-                self._logger.error(f"Error creating task for event {event_type}: {e}")
-                
-        # Fire and forget - don't wait for completion
-        if tasks:
-            # Log completion but don't wait
-            asyncio.create_task(self._log_completion(event_type, tasks))
-            
-    async def _log_completion(self, event_type: str, tasks: list):
-        """Log completion of event processing without blocking"""
-        try:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            errors = [r for r in results if isinstance(r, Exception)]
-            if errors:
-                self._logger.warning(f"Event {event_type}: {len(errors)}/{len(tasks)} listeners failed")
-        except Exception as e:
-            self._logger.error(f"Error in event completion logging: {e}")
+# PipelineEventBus removed - replaced with DistributedEventBus
 
 app = FastAPI(title="Voice Stream Orchestrator", version="2.0.0")
 
@@ -127,11 +76,15 @@ app.add_middleware(
 # Set up async exception handler on startup
 @app.on_event("startup")
 async def startup_event():
-    """Set up async exception handler when the app starts"""
+    """Set up async exception handler and initialize distributed systems when the app starts"""
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(handle_async_exception)
     logger.info("Async exception handler set up")
     logger.info("Voice Stream Orchestrator starting up...")
+    
+    # Initialize distributed systems
+    await orchestrator.initialize_distributed_systems()
+    logger.info("Distributed systems initialized on startup")
 
 class SegmentCache:
     """Event-driven segment deduplication cache for streaming transcription"""
@@ -218,8 +171,9 @@ class StreamSession:
         # self.resume_timer_task: Optional[asyncio.Task] = None # To hold the resume timer
 
 
-        # Event bus for ultra-fast processing
-        self.event_bus = PipelineEventBus()
+        # Distributed event bus for cross-service coordination
+        self.event_bus: Optional[DistributedEventBus] = None
+        self.service_coordinator: Optional[ServiceCoordinator] = None
         
         # Event-driven segment deduplication
         self.segment_cache = SegmentCache()
@@ -247,14 +201,21 @@ class StreamSession:
         return (time.time() - self.last_activity) > max_idle_time
 
     async def process_ultra_fast(self, text: str) -> None:
-        """Ultra-fast processing using event bus for fire-and-forget execution"""
+        """Ultra-fast processing using distributed event bus for fire-and-forget execution"""
         try:
-            # Emit event for immediate processing without waiting
-            await self.event_bus.emit("ultra_fast_process", {
-                "session_id": self.session_id,
-                "text": text,
-                "timestamp": time.time()
-            })
+            if not self.event_bus:
+                logger.warning(f"Session {self.session_id}: Event bus not initialized, skipping ultra-fast processing")
+                return
+                
+            # Create service event for immediate processing
+            event = ServiceEvent(
+                event_type="ultra_fast_process",
+                session_id=self.session_id,
+                service_id="orchestrator",
+                timestamp=time.time(),
+                data={"text": text}
+            )
+            await self.event_bus.publish("maestro:global", event)
         except Exception as e:
             logger.error(f"Error in ultra-fast processing for session {self.session_id}: {e}")
 
@@ -264,7 +225,8 @@ class VoiceStreamOrchestrator:
     """
     def __init__(self):
         self.sessions: Dict[str, StreamSession] = {}
-        self.event_bus = PipelineEventBus()
+        self.event_bus: Optional[DistributedEventBus] = None
+        self.service_coordinator: Optional[ServiceCoordinator] = None
         self.plugin_manager = PluginManager()
         
         # Initialize plugins
@@ -369,6 +331,22 @@ class VoiceStreamOrchestrator:
         except Exception as e:
             logger.error(f"Error initializing plugins: {e}")
     
+    async def initialize_distributed_systems(self):
+        """Initialize distributed event bus and service coordination"""
+        try:
+            # Initialize distributed event bus
+            self.event_bus = DistributedEventBus("orchestrator")
+            await self.event_bus.initialize()
+            
+            # Initialize service coordinator
+            self.service_coordinator = ServiceCoordinator("orchestrator")
+            await self.service_coordinator.initialize(self.event_bus)
+            
+            logger.info("✅ Distributed systems initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize distributed systems: {e}")
+            raise
+    
     async def cleanup_plugins(self) -> None:
         """Cleanup all plugins."""
         try:
@@ -409,8 +387,11 @@ class VoiceStreamOrchestrator:
         logger.debug(f"Creating StreamSession object for {session_id}")
         session = StreamSession(session_id)
         logger.debug(f"StreamSession created for {session_id}")
-        # soft_interrupt_handler = partial(self.handle_soft_interrupt, session)
-        # session.event_bus.on("soft_interrupt_detected", soft_interrupt_handler)
+        
+        # Share event bus and service coordinator with session
+        session.event_bus = self.event_bus
+        session.service_coordinator = self.service_coordinator
+        logger.debug(f"Event bus and service coordinator assigned to session {session_id}")
     
 
         # Establish WhisperLive connection with proper headers
@@ -430,15 +411,15 @@ class VoiceStreamOrchestrator:
                     interrupt_plugin = plugin
                     break
             
-            if interrupt_plugin:
-                # Register InterruptPlugin event handlers with session's event bus
-                session.event_bus.on("audio_monitor", interrupt_plugin._handle_audio_monitor)
-                session.event_bus.on("voice_during_tts", interrupt_plugin._handle_voice_during_tts)
-                session.event_bus.on("interrupted", interrupt_plugin._handle_interrupted)
-                session.event_bus.on("processing_complete", interrupt_plugin._handle_processing_complete)
-                logger.info(f"🛑 InterruptPlugin connected to session {session_id} event bus")
+            if interrupt_plugin and session.event_bus:
+                # Register InterruptPlugin event handlers with distributed event bus
+                await session.event_bus.subscribe(f"maestro:session:{session_id}", interrupt_plugin._handle_audio_monitor)
+                await session.event_bus.subscribe(f"maestro:session:{session_id}", interrupt_plugin._handle_voice_during_tts)
+                await session.event_bus.subscribe(f"maestro:interrupt", interrupt_plugin._handle_interrupted)
+                await session.event_bus.subscribe(f"maestro:session:{session_id}", interrupt_plugin._handle_processing_complete)
+                logger.info(f"🛑 InterruptPlugin connected to session {session_id} distributed event bus")
             else:
-                logger.warning(f"⚠️ InterruptPlugin not found for session {session_id}")
+                logger.warning(f"⚠️ InterruptPlugin not found or event bus not initialized for session {session_id}")
         else:
             logger.warning(f"⚠️ InterruptPlugin not available for session {session_id}")
         
@@ -819,14 +800,20 @@ class VoiceStreamOrchestrator:
             })
             
             # Emit continuous audio monitoring event via session event bus (fire-and-forget)
-            await session.event_bus.emit("audio_monitor", {
-                "session_id": session_id,
-                "audio_level": float(audio_level),
-                "voice_detected": voice_detected,
-                "is_processing": session.is_processing,
-                "tts_active": session.tts_active,
-                "timestamp": current_time
-            })
+            if session.event_bus:
+                event = ServiceEvent(
+                    event_type="audio_monitor",
+                    session_id=session_id,
+                    service_id="orchestrator",
+                    timestamp=current_time,
+                    data={
+                        "audio_level": float(audio_level),
+                        "voice_detected": voice_detected,
+                        "is_processing": session.is_processing,
+                        "tts_active": session.tts_active
+                    }
+                )
+                await session.event_bus.publish(f"maestro:session:{session_id}", event)
             
             # If voice detected during TTS, emit potential interrupt event
             logger.debug(f"🔥 [AUDIO_DEBUG] Checking interrupt conditions: voice_detected={voice_detected}, tts_active={session.tts_active}")
@@ -834,11 +821,17 @@ class VoiceStreamOrchestrator:
                 logger.info(f"🗣️ [INTERRUPT_DEBUG] Voice detected during TTS for session {session_id}, audio level: {audio_level}")
                 logger.info(f"🗣️ [INTERRUPT_DEBUG] Session state: is_processing={session.is_processing}, tts_active={session.tts_active}")
                 logger.info(f"🔥 [AUDIO_DEBUG] EMITTING voice_during_tts event NOW!")
-                await session.event_bus.emit("voice_during_tts", {
-                    "session_id": session_id,
-                    "audio_level": float(audio_level),
-                    "timestamp": current_time
-                })
+                if session.event_bus:
+                    event = ServiceEvent(
+                        event_type="voice_during_tts",
+                        session_id=session_id,
+                        service_id="orchestrator",
+                        timestamp=current_time,
+                        data={
+                            "audio_level": float(audio_level)
+                        }
+                    )
+                    await session.event_bus.publish(f"maestro:session:{session_id}", event)
                 logger.info(f"🗣️ [INTERRUPT_DEBUG] voice_during_tts event emitted")
             elif voice_detected:
                 logger.info(f"🔥 [AUDIO_DEBUG] Voice detected but NOT during TTS: tts_active={session.tts_active}")
@@ -875,13 +868,19 @@ class VoiceStreamOrchestrator:
                         completed_texts.append(text)
                         logger.info(f"✅ [INTERRUPT_DEBUG] New completed text found: {text}")
                         
-                        # Emit segment processed event via event bus (fire-and-forget)
-                        await session.event_bus.emit("segment_processed", {
-                            "session_id": session.session_id,
-                            "text": text,
-                            "segment_hash": session.segment_cache.get_segment_hash(text, current_time),
-                            "timestamp": current_time
-                        })
+                        # Emit segment processed event via distributed event bus (fire-and-forget)
+                        if session.event_bus:
+                            event = ServiceEvent(
+                                event_type="segment_processed",
+                                session_id=session.session_id,
+                                service_id="orchestrator",
+                                timestamp=current_time,
+                                data={
+                                    "text": text,
+                                    "segment_hash": session.segment_cache.get_segment_hash(text, current_time)
+                                }
+                            )
+                            await session.event_bus.publish(f"maestro:session:{session.session_id}", event)
                     else:
                         logger.debug(f"⚠️ [INTERRUPT_DEBUG] Duplicate segment ignored: {text}")
             else:
@@ -986,6 +985,15 @@ class VoiceStreamOrchestrator:
         session.processing_text = text  # Store the text being processed
         session.last_processing_start = time.time()  # Track when processing started
         session.total_requests += 1
+        
+        # Report state transition to service coordinator
+        if session.service_coordinator:
+            await session.service_coordinator.report_state(
+                session_id=session.session_id,
+                service_type=ServiceType.ORCHESTRATOR,
+                state=ServiceState.THINKING,
+                metadata={"text": text, "request_count": session.total_requests}
+            )
         logger.info(f"🚀 [INTERRUPT_DEBUG] Session state updated: is_processing={session.is_processing}, processing_text='{session.processing_text}'")
         
         try:
@@ -994,14 +1002,20 @@ class VoiceStreamOrchestrator:
             session.tts_sequence_number = 0
             session.tts_queue.clear()
             
-            # Emit state transition event via session event bus (fire-and-forget)
-            await session.event_bus.emit("state_transition", {
-                "session_id": session.session_id,
-                "from_state": "idle",
-                "to_state": "processing",
-                "text": text,
-                "timestamp": time.time()
-            })
+            # Emit state transition event via distributed event bus (fire-and-forget)
+            if session.event_bus:
+                event = ServiceEvent(
+                    event_type="state_transition",
+                    session_id=session.session_id,
+                    service_id="orchestrator",
+                    timestamp=time.time(),
+                    data={
+                        "from_state": "idle",
+                        "to_state": "processing",
+                        "text": text
+                    }
+                )
+                await session.event_bus.publish(f"maestro:session:{session.session_id}", event)
             
             # Notify frontend that processing started
             await self._send_to_frontend(session, {
@@ -1067,22 +1081,43 @@ class VoiceStreamOrchestrator:
                 session.tts_abort_event.clear()
                 logger.info(f"Session {session.session_id}: Cleared abort event after interruption")
                 
-                await session.event_bus.emit("state_transition", {
-                    "session_id": session.session_id,
-                    "from_state": "processing",
-                    "to_state": "interrupted",
-                    "text": text,
-                    "timestamp": current_time
-                })
+                if session.event_bus:
+                    event = ServiceEvent(
+                        event_type="state_transition",
+                        session_id=session.session_id,
+                        service_id="orchestrator",
+                        timestamp=current_time,
+                        data={
+                            "from_state": "processing",
+                            "to_state": "interrupted",
+                            "text": text
+                        }
+                    )
+                    await session.event_bus.publish(f"maestro:session:{session.session_id}", event)
             else:
                 # Completed processing normally
-                await session.event_bus.emit("state_transition", {
-                    "session_id": session.session_id,
-                    "from_state": "processing",
-                    "to_state": "idle",
-                    "text": text,
-                    "timestamp": current_time
-                })
+                if session.event_bus:
+                    event = ServiceEvent(
+                        event_type="state_transition",
+                        session_id=session.session_id,
+                        service_id="orchestrator",
+                        timestamp=current_time,
+                        data={
+                            "from_state": "processing",
+                            "to_state": "idle",
+                            "text": text
+                        }
+                    )
+                    await session.event_bus.publish(f"maestro:session:{session.session_id}", event)
+                
+                # Report state transition to service coordinator
+                if session.service_coordinator:
+                    await session.service_coordinator.report_state(
+                        session_id=session.session_id,
+                        service_type=ServiceType.ORCHESTRATOR,
+                        state=ServiceState.IDLE,
+                        metadata={"text": text, "completed": True}
+                    )
                 
                 # Only send processing_complete if not interrupted
                 await self._send_to_frontend(session, {
@@ -1290,7 +1325,17 @@ class VoiceStreamOrchestrator:
             
         try:
             session.tts_active = True
+            session.tts_start_time = time.time()
             logger.info(f"🔍 [INTERRUPT_DEBUG] 🔊 TTS ACTIVATED (direct) for session {session.session_id}")
+            
+            # Report TTS state to service coordinator
+            if session.service_coordinator:
+                await session.service_coordinator.report_state(
+                    session_id=session.session_id,
+                    service_type=ServiceType.MOUTH,
+                    state=ServiceState.SPEAKING,
+                    metadata={"sentence": sentence, "sequence": sequence}
+                )
             
             # Generate TTS audio
             async with httpx.AsyncClient(timeout=config.TTS_TIMEOUT) as client:
@@ -1326,6 +1371,15 @@ class VoiceStreamOrchestrator:
         finally:
             session.tts_active = False
             logger.info(f"🔍 [INTERRUPT_DEBUG] 🔇 TTS DEACTIVATED (direct) for session {session.session_id}")
+            
+            # Report TTS completion to service coordinator
+            if session.service_coordinator:
+                await session.service_coordinator.report_state(
+                    session_id=session.session_id,
+                    service_type=ServiceType.MOUTH,
+                    state=ServiceState.IDLE,
+                    metadata={"sentence": sentence, "sequence": sequence, "completed": True}
+                )
 
     async def _send_to_frontend(self, session: StreamSession, message: dict):
         """Send message to frontend WebSocket"""
@@ -1338,7 +1392,7 @@ class VoiceStreamOrchestrator:
                 logger.error(f"❌ Failed to send to frontend: {e}")
                 
     async def interrupt_session(self, session_id: str) -> bool:
-        """Interrupt TTS and processing for a session without dropping the WhisperLive connection."""
+        """Interrupt TTS and processing for a session using coordinated workflow."""
         logger.info(f"🛑 [INTERRUPT_DEBUG] INTERRUPT REQUEST RECEIVED for session {session_id}")
         
         if session_id not in self.sessions:
@@ -1346,6 +1400,17 @@ class VoiceStreamOrchestrator:
             return False
             
         session = self.sessions[session_id]
+        
+        # Use coordinated interrupt workflow if service coordinator is available
+        if session.service_coordinator:
+            logger.info(f"🛑 [INTERRUPT_DEBUG] Using coordinated interrupt workflow")
+            try:
+                await session.service_coordinator.trigger_interrupt(session_id, "user_interrupt")
+                logger.info(f"🛑 [INTERRUPT_DEBUG] Coordinated interrupt initiated")
+            except Exception as e:
+                logger.error(f"🛑 [INTERRUPT_DEBUG] Coordinated interrupt failed, falling back to local interrupt: {e}")
+        else:
+            logger.warning(f"🛑 [INTERRUPT_DEBUG] No service coordinator, using local interrupt only")
         
         # Log current session state before interruption
         logger.info(f"🛑 [INTERRUPT_DEBUG] Session state BEFORE interrupt:")
@@ -1412,12 +1477,18 @@ class VoiceStreamOrchestrator:
         # 6. Emit interrupt event via session event bus (fire-and-forget)
         logger.info(f"🛑 [INTERRUPT_DEBUG] Step 6: Emitting interrupt events")
         current_time = time.time()
-        await session.event_bus.emit("interrupt_triggered", {
-            "session_id": session_id,
-            "was_processing": was_processing,
-            "was_tts_active": was_tts_active,
-            "timestamp": current_time
-        })
+        if session.event_bus:
+            event = ServiceEvent(
+                event_type="interrupt_triggered",
+                session_id=session_id,
+                service_id="orchestrator",
+                timestamp=current_time,
+                data={
+                    "was_processing": was_processing,
+                    "was_tts_active": was_tts_active
+                }
+            )
+            await session.event_bus.publish(f"maestro:interrupt", event)
         logger.info(f"🛑 [INTERRUPT_DEBUG] Step 6: Interrupt event emitted via session event bus")
         
         # 7. Keep WhisperLive connection open - do NOT disconnect during interrupt
@@ -1533,11 +1604,11 @@ async def websocket_voice_endpoint(websocket: WebSocket):
         logger.debug(f"Session {session_id}: Frontend WebSocket assigned to session")
         
         # Register ultra-fast processing handler
-        async def handle_ultra_fast_process(event_data):
+        async def handle_ultra_fast_process(event: ServiceEvent):
             """Handle ultra-fast processing events"""
             try:
-                text = event_data["text"]
-                event_session_id = event_data["session_id"]
+                text = event.data["text"]
+                event_session_id = event.session_id
                 
                 # Skip if not for this session
                 if event_session_id != session.session_id:
@@ -1550,7 +1621,8 @@ async def websocket_voice_endpoint(websocket: WebSocket):
                 logger.error(f"Error in ultra-fast processing handler: {e}")
         
         # Register the handler
-        session.event_bus.on("ultra_fast_process", handle_ultra_fast_process)
+        if session.event_bus:
+            await session.event_bus.subscribe("maestro:global", handle_ultra_fast_process)
         
         
         # Send ready signal
@@ -1559,6 +1631,15 @@ async def websocket_voice_endpoint(websocket: WebSocket):
             "session_id": session_id,
             "mode": "ultra_fast"
         }))
+        
+        # Report initial listening state to service coordinator
+        if session.service_coordinator:
+            await session.service_coordinator.report_state(
+                session_id=session_id,
+                service_type=ServiceType.ORCHESTRATOR,
+                state=ServiceState.LISTENING,
+                metadata={"ready": True, "mode": "ultra_fast"}
+            )
         
         # Handle incoming messages
         while True:
